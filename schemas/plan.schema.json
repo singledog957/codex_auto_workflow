@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "tasks"],
+  "properties": {
+    "summary": { "type": "string", "minLength": 1 },
+    "tasks": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 120,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "objective",
+          "acceptanceCriteria",
+          "dependencies",
+          "verificationProfile",
+          "risk"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^T[0-9]{3,}$" },
+          "title": { "type": "string", "minLength": 1 },
+          "objective": { "type": "string", "minLength": 1 },
+          "acceptanceCriteria": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "dependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^T[0-9]{3,}$" }
+          },
+          "verificationProfile": {
+            "type": "string",
+            "enum": ["backend", "frontend", "full", "docs"]
+          },
+          "risk": { "type": "string", "enum": ["normal", "high"] }
+        }
+      }
+    }
+  }
+}

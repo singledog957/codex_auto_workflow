@@ -1,0 +1,9 @@
+{
+  "name": "daijian-auto-workflow",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "dry-run": "node runner.mjs run ../doc/addr/20260815_redesign/implement.md --dry-run"
+  }
+}

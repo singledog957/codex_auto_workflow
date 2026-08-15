@@ -1,0 +1,85 @@
+{
+  "models": {
+    "planner": {
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high"
+    },
+    "attempts": [
+      {
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "medium"
+      },
+      {
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "medium"
+      },
+      {
+        "model": "gpt-5.6-terra",
+        "reasoningEffort": "high"
+      },
+      {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "high"
+      }
+    ],
+    "highRiskAttempts": [
+      {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "high"
+      },
+      {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "high"
+      }
+    ],
+    "reviewer": {
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high"
+    }
+  },
+  "execution": {
+    "sandbox": "workspace-write",
+    "maxHours": 8,
+    "maxCodexCalls": 30,
+    "codexTimeoutMinutes": 90,
+    "verificationTimeoutMinutes": 30,
+    "checkpointEvery": 3,
+    "requireCleanTree": true,
+    "autoCommit": true
+  },
+  "verification": {
+    "profiles": {
+      "backend": [
+        "npm --prefix backend run typecheck",
+        "npm --prefix backend test"
+      ],
+      "frontend": [
+        "npm --prefix frontend test",
+        "npm --prefix frontend run build"
+      ],
+      "full": [
+        "npm --prefix backend run typecheck",
+        "npm --prefix backend test",
+        "npm --prefix frontend test"
+      ],
+      "docs": [
+        "git diff --check"
+      ]
+    },
+    "checkpoint": [
+      "npm run lint",
+      "npm run build",
+      "npm --prefix backend test",
+      "npm --prefix frontend test",
+      "git diff --check"
+    ],
+    "final": [
+      "npm run lint",
+      "npm --prefix backend run typecheck",
+      "npm run build",
+      "npm --prefix backend test",
+      "npm --prefix frontend test",
+      "git diff --check"
+    ]
+  }
+}
