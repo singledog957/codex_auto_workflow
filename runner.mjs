@@ -4,7 +4,7 @@ import { access, mkdir, readFile, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 
-import { modelForTaskAttempt, resolveConfig, verificationCommands } from './lib/config.mjs'
+import { inspectionSandbox, modelForTaskAttempt, resolveConfig, verificationCommands } from './lib/config.mjs'
 import { runCodex } from './lib/codex.mjs'
 import { readJson, writeJsonAtomic, writeText } from './lib/files.mjs'
 import { commitCheckpoint, gitBranch, gitHead, gitInvariantViolation, gitStatus } from './lib/git.mjs'
@@ -146,7 +146,7 @@ async function createPlan({ sourceDocument, repoRoot, runDir, config, deadline }
     cwd: repoRoot,
     model: config.models.planner.model,
     reasoningEffort: config.models.planner.reasoningEffort,
-    sandbox: 'read-only',
+    sandbox: inspectionSandbox(config),
     outputSchema: planSchemaPath,
     outputLastMessage: outputPath,
     logPath,
@@ -310,7 +310,7 @@ async function finalize({ state, repoRoot, runDir, config, deadline, session }) 
     cwd: repoRoot,
     model: config.models.reviewer.model,
     reasoningEffort: config.models.reviewer.reasoningEffort,
-    sandbox: 'read-only',
+    sandbox: inspectionSandbox(config),
     outputSchema: reviewSchemaPath,
     outputLastMessage: outputPath,
     logPath,

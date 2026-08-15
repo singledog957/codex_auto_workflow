@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { modelForAttempt, modelForTaskAttempt, resolveConfig, verificationCommands } from '../lib/config.mjs'
+import {
+  inspectionSandbox,
+  modelForAttempt,
+  modelForTaskAttempt,
+  resolveConfig,
+  verificationCommands,
+} from '../lib/config.mjs'
 
 test('routes bounded attempts from Luna to Terra and Sol', () => {
   const config = resolveConfig({})
@@ -37,6 +43,16 @@ test('rejects unsafe or incomplete configuration', () => {
   assert.throws(() => resolveConfig({ models: { attempts: [] } }), /attempt/i)
   assert.throws(
     () => resolveConfig({ execution: { sandbox: 'danger-full-access' } }),
-    /danger-full-access/i,
+    /allowDangerFullAccess/i,
   )
+})
+
+test('allows an explicit VM compatibility escape hatch and applies it to inspection roles', () => {
+  const config = resolveConfig({
+    execution: { sandbox: 'danger-full-access', allowDangerFullAccess: true },
+  })
+
+  assert.equal(config.execution.sandbox, 'danger-full-access')
+  assert.equal(inspectionSandbox(config), 'danger-full-access')
+  assert.equal(inspectionSandbox(resolveConfig({})), 'read-only')
 })

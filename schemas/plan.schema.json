@@ -1,8 +1,12 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "tasks"],
+  "required": ["outcome", "summary", "tasks"],
   "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["work_remaining", "already_complete", "blocked"]
+    },
     "summary": { "type": "string" },
     "tasks": {
       "type": "array",
