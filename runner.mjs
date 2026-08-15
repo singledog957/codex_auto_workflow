@@ -98,6 +98,7 @@ function previewPlan(markdown) {
   const headings = [...markdown.matchAll(/^####\s+(I-\d+)[：:]\s*(.+)$/gm)]
   const selected = headings.length ? headings : [[null, 'I-00', 'Review source document']]
   return {
+    outcome: 'work_remaining',
     summary: 'Dry-run preview extracted from document headings. The real Sol planner may skip completed work and split large items.',
     tasks: selected.map((match, index) => ({
       id: `T${String(index + 1).padStart(3, '0')}`,
@@ -371,6 +372,7 @@ async function executeNew(options) {
     session.calls += 1
   } catch (error) {
     const failurePlan = {
+      outcome: 'work_remaining',
       summary: 'The planning bootstrap failed before an implementation queue could be created.',
       tasks: [{
         id: 'T000',
@@ -435,11 +437,22 @@ async function executeResume(options) {
     try {
       plan = await createPlan({ sourceDocument, repoRoot, runDir, config, deadline })
     } catch (error) {
-      markAttemptFailed(state, 'T000', {
-        model: config.models.planner.model,
-        reason: error.message,
-        terminal: true,
-      })
+      const bootstrapTask = state.tasks.find((task) => task.id === 'T000')
+      if (bootstrapTask) {
+        markAttemptFailed(state, 'T000', {
+          model: config.models.planner.model,
+          reason: error.message,
+          terminal: true,
+        })
+      } else {
+        state.status = 'BLOCKED'
+        state.events.push({
+          at: new Date().toISOString(),
+          type: 'planning_retry_failed',
+          message: error.message,
+          model: config.models.planner.model,
+        })
+      }
       await saveState(runDir, state)
       console.log(renderReport(state))
       return state
