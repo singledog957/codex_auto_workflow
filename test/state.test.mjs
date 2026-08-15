@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   createRunState,
+  isPlanningBootstrapState,
   markAttemptFailed,
   markTaskCompleted,
   nextRunnableTask,
@@ -41,6 +42,29 @@ test('schedules only tasks whose dependencies completed', () => {
   assert.equal(nextRunnableTask(state).id, 'T001')
   markTaskCompleted(state, 'T001', { commit: 'abc123', now: '2026-08-16T00:10:00.000Z' })
   assert.equal(nextRunnableTask(state).id, 'T002')
+})
+
+test('recognizes only the synthetic blocked planning bootstrap as retryable', () => {
+  const state = createRunState({
+    sourceDocument: 'doc/plan.md',
+    plan: {
+      summary: 'planning failed',
+      tasks: [{
+        id: 'T000',
+        title: 'Planning bootstrap',
+        objective: 'Create a plan.',
+        acceptanceCriteria: ['plan exists'],
+        dependencies: [],
+        verificationProfile: 'docs',
+        risk: 'high',
+      }],
+    },
+  })
+  state.tasks[0].status = 'blocked'
+
+  assert.equal(isPlanningBootstrapState(state), true)
+  state.tasks[0].title = 'real task'
+  assert.equal(isPlanningBootstrapState(state), false)
 })
 
 test('accepts an empty remaining-work plan and rejects dependency cycles', () => {

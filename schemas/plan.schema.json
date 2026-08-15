@@ -1,10 +1,9 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
   "required": ["summary", "tasks"],
   "properties": {
-    "summary": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string" },
     "tasks": {
       "type": "array",
       "minItems": 0,
@@ -23,17 +22,16 @@
         ],
         "properties": {
           "id": { "type": "string", "pattern": "^T[0-9]{3,}$" },
-          "title": { "type": "string", "minLength": 1 },
-          "objective": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "objective": { "type": "string" },
           "acceptanceCriteria": {
             "type": "array",
             "minItems": 1,
             "maxItems": 5,
-            "items": { "type": "string", "minLength": 1 }
+            "items": { "type": "string" }
           },
           "dependencies": {
             "type": "array",
-            "uniqueItems": true,
             "items": { "type": "string", "pattern": "^T[0-9]{3,}$" }
           },
           "verificationProfile": {

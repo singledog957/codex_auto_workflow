@@ -81,6 +81,8 @@ node auto-workflow/runner.mjs resume auto-workflow/.runs/<run-id>
 
 每次 resume 都获得新的 8 小时/30 次调用窗口。不要在这个 worktree 中混入手工修改；失败尝试留下的未提交代码会作为下一次修复的上下文继续使用。
 
+如果最初的 Planner 在生成任务队列前失败，报告会显示 `T000 Planning bootstrap`。`resume` 会识别这个合成任务并重新运行 Planner，不需要删除 run 目录或重新创建 worktree。
+
 ## 停止
 
 读取 `.runs/<run-id>/pid`，先发送普通终止信号：

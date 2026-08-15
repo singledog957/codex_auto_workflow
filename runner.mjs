@@ -13,6 +13,7 @@ import { plannerPrompt, reviewerPrompt, workerPrompt } from './lib/prompts.mjs'
 import { renderReport } from './lib/report.mjs'
 import {
   createRunState,
+  isPlanningBootstrapState,
   markAttemptFailed,
   markTaskCompleted,
   nextRunnableTask,
@@ -320,7 +321,11 @@ async function finalize({ state, repoRoot, runDir, config, deadline, session }) 
     state.status = 'BLOCKED'
   } else {
     const review = await readJson(outputPath)
-    if (!['approved', 'rejected'].includes(review.status) || !Array.isArray(review.blockers)) {
+    if (!['approved', 'rejected'].includes(review.status)
+      || typeof review.summary !== 'string'
+      || review.summary.length === 0
+      || !Array.isArray(review.blockers)
+      || review.blockers.some((blocker) => typeof blocker !== 'string' || blocker.length === 0)) {
       throw new Error('Final reviewer returned invalid structured output')
     }
     state.finalReview = review
@@ -415,6 +420,48 @@ async function executeResume(options) {
   state.sessions.push({ startedAt: new Date().toISOString(), kind: 'resume' })
   const session = { calls: 0 }
   const deadline = Date.now() + config.execution.maxHours * 60 * 60_000
+
+  if (isPlanningBootstrapState(state)) {
+    const sourceDocument = await resolveExistingInsideRepository(repoRoot, state.sourceDocument, 'Source document')
+    state.codexCalls += 1
+    session.calls += 1
+    state.events.push({
+      at: new Date().toISOString(),
+      type: 'planning_retried',
+      message: 'Retrying the failed planning bootstrap with the current workflow schema.',
+    })
+    await saveState(runDir, state)
+    let plan
+    try {
+      plan = await createPlan({ sourceDocument, repoRoot, runDir, config, deadline })
+    } catch (error) {
+      markAttemptFailed(state, 'T000', {
+        model: config.models.planner.model,
+        reason: error.message,
+        terminal: true,
+      })
+      await saveState(runDir, state)
+      console.log(renderReport(state))
+      return state
+    }
+
+    const resumedState = createRunState({ sourceDocument: state.sourceDocument, plan })
+    resumedState.baseCommit = state.baseCommit
+    resumedState.branch = state.branch
+    resumedState.codexCalls = state.codexCalls
+    resumedState.sessions = state.sessions
+    resumedState.events = [
+      ...state.events,
+      {
+        at: new Date().toISOString(),
+        type: 'planning_recovered',
+        message: `Planning bootstrap recovered with ${plan.tasks.length} task(s).`,
+      },
+    ]
+    await saveState(runDir, resumedState)
+    return executeLoop({ state: resumedState, repoRoot, runDir, config, deadline, session })
+  }
+
   await saveState(runDir, state)
   return executeLoop({ state, repoRoot, runDir, config, deadline, session })
 }
