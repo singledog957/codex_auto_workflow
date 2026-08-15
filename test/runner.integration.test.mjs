@@ -51,7 +51,7 @@ const valueAfter = (flag) => args[args.indexOf(flag) + 1]
 const schema = args.includes('--output-schema') ? valueAfter('--output-schema') : null
 const output = valueAfter('--output-last-message')
 if (schema && basename(schema) === 'plan.schema.json') {
-  await writeFile(output, JSON.stringify({summary:'tiny',tasks:[{id:'T001',title:'create marker',objective:'Create done.txt.',acceptanceCriteria:['done.txt exists'],dependencies:[],verificationProfile:'docs',risk:'normal'}]}))
+  await writeFile(output, JSON.stringify({outcome:'work_remaining',summary:'tiny',tasks:[{id:'T001',title:'create marker',objective:'Create done.txt.',acceptanceCriteria:['done.txt exists'],dependencies:[],verificationProfile:'docs',risk:'normal'}]}))
 } else if (schema && basename(schema) === 'review.schema.json') {
   await writeFile(output, JSON.stringify({status:'approved',summary:'complete',blockers:[]}))
 } else {

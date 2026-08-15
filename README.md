@@ -105,7 +105,7 @@ kill "$(cat auto-workflow/.runs/<run-id>/pid)"
 - 模型和 reasoning effort；
 - 仓库固定的验证命令。
 
-不要把 `sandbox` 改成 `danger-full-access`。配置校验会拒绝它。如果测试必须访问 Docker、网络或 worktree 外路径，应先把整个 runner 放进一次性容器，再明确扩展权限。
+当前仓库配置显式启用了 `danger-full-access`，因为这台 VM 的 Codex `read-only`/`workspace-write` 沙箱执行 shell 时会报 `bwrap: loopback: Failed RTM_NEWADDR`。它必须同时设置 `allowDangerFullAccess: true`，避免无意中开启。runner 仍使用隔离 worktree、固定验证命令、禁止审批和 git 不变量检查，但模型生成的 shell 命令不再受 OS 沙箱限制；只应在一次性或可信开发机上运行。换到支持 Codex 沙箱的机器后，应恢复 `workspace-write` 并删除该确认开关。
 
 默认聚合门禁使用 `npm run lint`/`npm run build`，避免后台非登录 shell 找不到由 Corepack 提供的 `pnpm`；它们仍然调用仓库根 `package.json` 中相同的前后端脚本。
 

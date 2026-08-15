@@ -9,7 +9,7 @@ Approve for repository-local use in an isolated worktree. It does not authorize 
 - Correctness: unit tests cover routing, recovery, dependency scheduling, timeouts, Git invariants, and terminal states. A fake-Codex integration test proves planning, editing, fixed gates, checkpoint commit, and final review end to end.
 - Readability: orchestration is separated from configuration, state, process, Git, prompt, and report helpers. The runner remains the largest file because it owns the explicit lifecycle.
 - Architecture: model output is structured data. It selects only a verification profile; checked-in configuration owns executable commands.
-- Security: workspace-write is the only accepted sandbox; user config is ignored; approval policy is explicit; paths are confined to the repository and canonicalized; model-created commits/branch changes fail closed; logs/state use owner-only permissions; time and call budgets are bounded.
+- Security: danger-full-access requires an explicit compatibility acknowledgement for VMs where bwrap cannot execute; user config is ignored; approval policy is explicit; paths controlled by the runner are confined to the repository and canonicalized; model-created commits/branch changes fail closed; logs/state use owner-only permissions; time and call budgets are bounded.
 - Performance: one writer avoids conflicts. Quick task profiles run before the more expensive every-three-task checkpoint and final gates.
 
 ## Known boundaries

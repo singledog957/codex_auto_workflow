@@ -13,6 +13,7 @@ import {
 } from '../lib/state.mjs'
 
 const plan = {
+  outcome: 'work_remaining',
   summary: 'small plan',
   tasks: [
     {
@@ -48,6 +49,7 @@ test('recognizes only the synthetic blocked planning bootstrap as retryable', ()
   const state = createRunState({
     sourceDocument: 'doc/plan.md',
     plan: {
+      outcome: 'work_remaining',
       summary: 'planning failed',
       tasks: [{
         id: 'T000',
@@ -67,15 +69,37 @@ test('recognizes only the synthetic blocked planning bootstrap as retryable', ()
   assert.equal(isPlanningBootstrapState(state), false)
 })
 
-test('accepts an empty remaining-work plan and rejects dependency cycles', () => {
-  assert.doesNotThrow(() => validatePlan({ summary: 'already complete', tasks: [] }))
+test('requires a truthful plan outcome and rejects dependency cycles', () => {
+  assert.doesNotThrow(() => validatePlan({ outcome: 'already_complete', summary: 'already complete', tasks: [] }))
+  assert.throws(
+    () => validatePlan({ outcome: 'work_remaining', summary: 'inspection failed', tasks: [] }),
+    /at least one task/i,
+  )
+  assert.throws(
+    () => validatePlan({ outcome: 'blocked', summary: 'inspection failed', tasks: [] }),
+    /planning was blocked/i,
+  )
   assert.throws(() => validatePlan({
+    outcome: 'work_remaining',
     summary: 'cyclic',
     tasks: [
       { ...plan.tasks[0], dependencies: ['T002'] },
       { ...plan.tasks[1], dependencies: ['T001'] },
     ],
   }), /dependency cycle/i)
+})
+
+test('recognizes a legacy zero-task false success as retryable planning', () => {
+  const state = createRunState({
+    sourceDocument: 'doc/plan.md',
+    plan: { outcome: 'already_complete', summary: 'complete', tasks: [] },
+  })
+  delete state.planOutcome
+  state.finalVerification = null
+
+  assert.equal(isPlanningBootstrapState(state), true)
+  state.planOutcome = 'already_complete'
+  assert.equal(isPlanningBootstrapState(state), false)
 })
 
 test('recovers an interrupted running task as pending without losing evidence', () => {
