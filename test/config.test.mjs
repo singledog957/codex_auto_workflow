@@ -42,6 +42,10 @@ test('verification commands come from checked-in profiles, not planner output', 
 test('rejects unsafe or incomplete configuration', () => {
   assert.throws(() => resolveConfig({ models: { attempts: [] } }), /attempt/i)
   assert.throws(
+    () => resolveConfig({ execution: { maxCheckpointReplans: -1 } }),
+    /maxCheckpointReplans/i,
+  )
+  assert.throws(
     () => resolveConfig({ execution: { sandbox: 'danger-full-access' } }),
     /allowDangerFullAccess/i,
   )

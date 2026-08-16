@@ -14,6 +14,7 @@ import {
   gitHead,
   gitInvariantViolation,
   gitStatus,
+  gitWorktreeFingerprint,
 } from './lib/git.mjs'
 import { runCommands } from './lib/process.mjs'
 import { checkpointPrompt, plannerPrompt, reviewerPrompt, workerPrompt } from './lib/prompts.mjs'
@@ -145,6 +146,8 @@ function previewPlan(markdown) {
     summary: 'Dry-run preview extracted from document headings. The real Sol planner may skip completed work and split large items.',
     tasks: selected.map((match, index) => ({
       id: `T${String(index + 1).padStart(3, '0')}`,
+      taskType: 'implementation',
+      maxFiles: 5,
       title: `${match[1]} ${match[2]}`,
       objective: `Assess and implement the remaining scope of ${match[1]}.`,
       acceptanceCriteria: ['The real planning pass will replace this preview with repository-aware criteria.'],
@@ -362,7 +365,7 @@ async function runCheckpointTask({ task, state, repoRoot, runDir, config, deadli
   const gitBefore = {
     head: await gitHead(repoRoot),
     branch: await gitBranch(repoRoot),
-    changedFiles: await gitChangedFiles(repoRoot),
+    worktree: await gitWorktreeFingerprint(repoRoot),
   }
   const result = await runCodex({
     prompt: checkpointPrompt({
@@ -382,10 +385,10 @@ async function runCheckpointTask({ task, state, repoRoot, runDir, config, deadli
   const gitAfter = {
     head: await gitHead(repoRoot),
     branch: await gitBranch(repoRoot),
-    changedFiles: await gitChangedFiles(repoRoot),
+    worktree: await gitWorktreeFingerprint(repoRoot),
   }
   const invariantViolation = gitInvariantViolation(gitBefore, gitAfter)
-  const changedWorktree = JSON.stringify(gitBefore.changedFiles) !== JSON.stringify(gitAfter.changedFiles)
+  const changedWorktree = gitBefore.worktree !== gitAfter.worktree
   if (invariantViolation || changedWorktree) {
     markAttemptFailed(state, task.id, {
       model,
@@ -427,8 +430,8 @@ async function runCheckpointTask({ task, state, repoRoot, runDir, config, deadli
       return
     }
     addCheckpointFindings(state, task.id, review)
-    await saveExpandedPlan(runDir, state)
     await saveState(runDir, state)
+    await saveExpandedPlan(runDir, state)
     return
   }
   if (taskVerification.status !== 'passed') {
@@ -555,6 +558,8 @@ async function executeNew(options) {
       summary: 'The planning bootstrap failed before an implementation queue could be created.',
       tasks: [{
         id: 'T000',
+        taskType: 'implementation',
+        maxFiles: 1,
         title: 'Planning bootstrap',
         objective: 'Create and validate the durable implementation plan.',
         acceptanceCriteria: ['A schema-valid repository-aware plan exists.'],

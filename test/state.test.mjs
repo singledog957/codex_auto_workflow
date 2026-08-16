@@ -144,6 +144,7 @@ test('reports complete only after tasks, final gates, and final review pass', ()
 test('recognizes explicit and legacy checkpoint tasks without changing legacy implementation tasks', () => {
   assert.equal(effectiveTaskType({ taskType: 'checkpoint', title: 'Phase gate' }), 'checkpoint')
   assert.equal(effectiveTaskType({ title: 'Checkpoint P4 and qualification' }), 'checkpoint')
+  assert.equal(effectiveTaskType({ title: 'Final P8 Definition-of-Done verification' }), 'checkpoint')
   assert.equal(effectiveTaskType({ title: 'Implement checkpoint persistence' }), 'implementation')
 })
 
@@ -201,4 +202,33 @@ test('turns checkpoint findings into bounded repair tasks before retrying the ch
   assert.equal(state.tasks.find((task) => task.id === 'T003').dependencies[0], 'T002')
   assert.equal(nextRunnableTask(state).id, 'T004')
   assert.equal(state.tasks.find((task) => task.id === 'T002').attempts.at(-1).status, 'findings')
+})
+
+test('rejects checkpoint findings that omit the hard file budget', () => {
+  const state = createRunState({
+    sourceDocument: 'doc/plan.md',
+    plan: {
+      outcome: 'work_remaining',
+      summary: 'checkpoint plan',
+      tasks: [{
+        ...plan.tasks[0],
+        taskType: 'checkpoint',
+        title: 'Checkpoint P1',
+      }],
+    },
+  })
+  state.tasks[0].status = 'running'
+  state.tasks[0].attempts.push({ model: 'gpt-5.6-sol', status: 'started' })
+
+  assert.throws(() => addCheckpointFindings(state, 'T001', {
+    status: 'gaps_found',
+    summary: 'unbounded finding',
+    findings: [{
+      title: 'Unbounded repair',
+      objective: 'Repair something.',
+      acceptanceCriteria: ['It is repaired.'],
+      verificationProfile: 'docs',
+      risk: 'normal',
+    }],
+  }), /maxFiles/i)
 })

@@ -262,3 +262,35 @@ console.log(JSON.stringify({type:'turn.completed'}))
   assert.match(log.stdout, /auto: complete T002/)
   assert.doesNotMatch(log.stdout, /auto: complete T001/)
 })
+
+test('dry-run preview emits the same task controls required from the real planner', async (t) => {
+  const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-dry-run-controls-'))
+  t.after(() => rm(repo, { recursive: true, force: true }))
+  await mkdir(join(repo, 'auto-workflow'))
+  await writeFile(join(repo, 'doc.md'), '#### I-01: Small change\n')
+  await writeFile(join(repo, 'config.json'), '{}\n')
+  await run('git', ['init', '-q'], { cwd: repo })
+  await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: repo })
+  await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: repo })
+  await run('git', ['add', '.'], { cwd: repo })
+  await run('git', ['commit', '-qm', 'initial'], { cwd: repo })
+
+  const result = await run(process.execPath, [
+    runnerPath,
+    'run',
+    'doc.md',
+    '--config',
+    'config.json',
+    '--run-dir',
+    'auto-workflow/.runs/dry-run-controls',
+    '--dry-run',
+  ], { cwd: repo })
+
+  assert.equal(result.code, 0, result.stderr || result.stdout)
+  const plan = JSON.parse(await readFile(
+    join(repo, 'auto-workflow/.runs/dry-run-controls/plan.json'),
+    'utf8',
+  ))
+  assert.equal(plan.tasks[0].taskType, 'implementation')
+  assert.equal(plan.tasks[0].maxFiles, 5)
+})

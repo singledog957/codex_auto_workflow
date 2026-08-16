@@ -4,12 +4,18 @@
 
 ## 它如何工作
 
-1. `gpt-5.6-sol/high` 只读检查实施文档和现有代码，生成小型、带依赖的 JSON 任务。
+1. `gpt-5.6-sol/high` 只读检查实施文档和现有代码，生成小型、带依赖的 JSON 任务；每项显式区分为 `implementation` 或 `checkpoint`，并带有 1–5 个文件的硬预算。
 2. 普通任务依次使用 Luna、Luna、Terra、Sol；迁移、并发、授权、secret、公共契约等高风险任务直接使用 Sol，最多两次。
 3. Agent 只能选择 `backend`、`frontend`、`full`、`docs` 验证档位，不能生成要执行的测试命令。真实命令固定在 `config.json`。
 4. Controller 亲自运行验证并检查退出码。验证通过才创建 Git checkpoint；失败则把真实日志交给下一次尝试。
 5. 每三项运行一次 checkpoint 门禁；全部任务结束后运行完整门禁和独立 Sol 审查。
 6. 每一步保存到 `.runs/<run-id>/state.json`，中断后可以继续。
+
+Phase checkpoint 是只读验收任务，不再复用可写 implementation worker。它只检查验收条件和 controller
+证据：通过则记录完成；发现实质缺口则生成最多五个独立、带文件预算的修复任务，把这些任务插入 checkpoint
+之前，修复完成后再验收。默认最多允许两轮这种重排，仍有缺口就进入 `BLOCKED`，避免在一个 checkpoint
+里持续扩张。即使 VM 配置使用 `danger-full-access`，controller 也会比较审查前后的 Git 工作树；checkpoint
+发生任何写入都会阻塞且不会提交。
 
 ## 第一次使用
 
@@ -112,6 +118,7 @@ tmux send-keys -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)" C-c
 - `maxHours`：单晚时间预算；
 - `maxCodexCalls`：单晚模型调用预算；
 - `checkpointEvery`：完整 checkpoint 的频率；
+- `maxCheckpointReplans`：显式 Phase checkpoint 最多允许的缺口拆单轮数，默认 2；
 - 模型和 reasoning effort；
 - 仓库固定的验证命令。
 
