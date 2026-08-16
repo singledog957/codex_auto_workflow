@@ -16,7 +16,7 @@
 要求：
 
 - 已安装并登录 Codex CLI：`codex --version`、`codex login status`。
-- Node.js 24、项目依赖和测试环境已经就绪。
+- Node.js 24、tmux、项目依赖和测试环境已经就绪。
 - 先把本目录提交到 Git；`start.sh` 只从干净的提交创建隔离 worktree。
 - 电脑整夜保持通电，并关闭自动睡眠。锁屏没有问题，系统挂起会停止进程。
 
@@ -40,8 +40,8 @@ node auto-workflow/runner.mjs run doc/addr/20260815_redesign/implement.md --dry-
 - 从当前 `HEAD` 创建 `auto/overnight-<时间>` 分支；
 - 在仓库同级目录创建独立 worktree；
 - 复用主工作区已经安装的前后端 `node_modules`（只创建被 Git 忽略的符号链接）；
-- 后台启动 runner，然后立即返回；
-- 打印 worktree、PID、日志和状态命令。
+- 在命名的 tmux session 中后台启动 runner，然后立即返回；SSH 断开不会终止任务；
+- 打印 worktree、tmux session、日志和状态命令。
 
 希望在终端前台观察时：
 
@@ -54,8 +54,12 @@ node auto-workflow/runner.mjs run doc/addr/20260815_redesign/implement.md --dry-
 `start.sh` 会打印准确路径。进入那个 worktree 后运行：
 
 ```bash
+tmux has-session -t "=$(cat auto-workflow/.runs/<run-id>/tmux-session)"
 node auto-workflow/runner.mjs status auto-workflow/.runs/<run-id>
 ```
+
+需要查看实时终端时运行 `tmux attach-session -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)"`；按
+`Ctrl-b d` 只会退出观察，不会停止任务。
 
 也可以直接阅读：
 
@@ -63,7 +67,8 @@ node auto-workflow/runner.mjs status auto-workflow/.runs/<run-id>
 - `state.json`：可恢复状态、每项尝试、模型和验证证据；
 - `plan.json`：Sol 生成的任务分解；
 - `logs/`：Codex JSONL 和 controller 真实测试输出；
-- `operator.log`：后台 runner 的控制台输出。
+- `operator.log`：后台 runner 的控制台输出；
+- `tmux-session`：承载当前任务的 tmux session 名称。
 
 终态只有：
 
@@ -76,19 +81,20 @@ node auto-workflow/runner.mjs status auto-workflow/.runs/<run-id>
 在原 worktree 和原分支中运行：
 
 ```bash
-node auto-workflow/runner.mjs resume auto-workflow/.runs/<run-id>
+./auto-workflow/resume.sh auto-workflow/.runs/<run-id>
 ```
 
+`resume.sh` 默认在原 worktree 中创建同名 tmux session；如果该 session 仍存活，它只报告当前 session，不会重复启动 runner。
 每次 resume 都获得新的 8 小时/30 次调用窗口。不要在这个 worktree 中混入手工修改；失败尝试留下的未提交代码会作为下一次修复的上下文继续使用。
 
 如果最初的 Planner 在生成任务队列前失败，报告会显示 `T000 Planning bootstrap`。`resume` 会识别这个合成任务并重新运行 Planner，不需要删除 run 目录或重新创建 worktree。
 
 ## 停止
 
-读取 `.runs/<run-id>/pid`，先发送普通终止信号：
+向 tmux pane 发送 `Ctrl-C`，让 runner 和当前 Codex 子进程正常中断：
 
 ```bash
-kill "$(cat auto-workflow/.runs/<run-id>/pid)"
+tmux send-keys -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)" C-c
 ```
 
 不要删除 state 或 worktree。下次 `resume` 会把中断的 `running` attempt 还原为 `pending`，并保留日志证据。
