@@ -37,6 +37,19 @@ function parseOptions(argv) {
     else if (flag === '--config') options.configPath = rest[++index]
     else if (flag === '--run-dir') options.runDir = rest[++index]
     else if (flag === '--run-id') options.runId = rest[++index]
+    else if (flag === '--max-hours') {
+      if (command !== 'resume') throw new Error('--max-hours is only supported by resume')
+      const value = Number(rest[++index])
+      if (!Number.isFinite(value) || value <= 0) throw new Error('--max-hours must be a positive number')
+      options.maxHours = value
+    } else if (flag === '--max-codex-calls') {
+      if (command !== 'resume') throw new Error('--max-codex-calls is only supported by resume')
+      const value = Number(rest[++index])
+      if (!Number.isInteger(value) || value <= 0) {
+        throw new Error('--max-codex-calls must be a positive integer')
+      }
+      options.maxCodexCalls = value
+    }
     else throw new Error(`Unknown option: ${flag}`)
   }
   return options
@@ -45,7 +58,7 @@ function parseOptions(argv) {
 function usage() {
   return `Usage:
   node auto-workflow/runner.mjs run <document> [--config FILE] [--run-dir DIR] [--run-id ID] [--dry-run]
-  node auto-workflow/runner.mjs resume <run-directory>
+  node auto-workflow/runner.mjs resume <run-directory> [--max-hours HOURS] [--max-codex-calls CALLS]
   node auto-workflow/runner.mjs status <run-directory>`
 }
 
@@ -411,6 +424,8 @@ async function executeResume(options) {
   const repoRoot = await repositoryRoot(process.cwd())
   const runDir = ensureInsideRepository(repoRoot, options.positional, 'Run directory')
   const config = resolveConfig(await readJson(join(runDir, 'config.snapshot.json')))
+  config.execution.maxHours = options.maxHours ?? config.execution.maxHours
+  config.execution.maxCodexCalls = options.maxCodexCalls ?? config.execution.maxCodexCalls
   const state = recoverInterruptedState(await readJson(join(runDir, 'state.json')))
   const branch = await gitBranch(repoRoot)
   if (state.branch && branch !== state.branch) {
@@ -419,7 +434,14 @@ async function executeResume(options) {
   if (terminalStatus(state) === 'COMPLETE') return state
   state.status = 'RUNNING'
   state.sessions ??= []
-  state.sessions.push({ startedAt: new Date().toISOString(), kind: 'resume' })
+  state.sessions.push({
+    startedAt: new Date().toISOString(),
+    kind: 'resume',
+    budget: {
+      maxHours: config.execution.maxHours,
+      maxCodexCalls: config.execution.maxCodexCalls,
+    },
+  })
   const session = { calls: 0 }
   const deadline = Date.now() + config.execution.maxHours * 60 * 60_000
 

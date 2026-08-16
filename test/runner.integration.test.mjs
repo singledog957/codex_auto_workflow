@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -88,4 +88,83 @@ console.log(JSON.stringify({type:'turn.completed'}))
   assert.equal(await readFile(join(repo, 'done.txt'), 'utf8'), 'done\n')
   const log = await run('git', ['log', '--oneline', '-2'], { cwd: repo })
   assert.match(log.stdout, /auto: complete T001/)
+})
+
+test('resume can override the snapshot budget for one new session', async (t) => {
+  const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-resume-budget-'))
+  const bin = join(repo, 'fake-bin')
+  const runDirectory = 'auto-workflow/.runs/resume-budget'
+  const runPath = join(repo, runDirectory)
+  t.after(() => rm(repo, { recursive: true, force: true }))
+
+  await mkdir(bin)
+  await mkdir(runPath, { recursive: true })
+  await writeFile(join(repo, '.gitignore'), 'auto-workflow/.runs/\nfake-bin/\n')
+  await writeFile(join(repo, 'doc.md'), '# Resume budget test\n')
+  await writeFile(join(runPath, 'config.snapshot.json'), JSON.stringify({
+    execution: {
+      maxHours: 1,
+      maxCodexCalls: 1,
+      codexTimeoutMinutes: 1,
+      verificationTimeoutMinutes: 1,
+    },
+  }))
+  await writeFile(join(runPath, 'state.json'), JSON.stringify({
+    version: 1,
+    sourceDocument: 'doc.md',
+    planOutcome: 'work_remaining',
+    planSummary: 'Exercise resume budgets.',
+    status: 'BUDGET_EXHAUSTED',
+    startedAt: '2026-08-16T00:00:00.000Z',
+    updatedAt: '2026-08-16T00:00:00.000Z',
+    codexCalls: 0,
+    completedSinceCheckpoint: 0,
+    tasks: [{
+      id: 'T001',
+      title: 'Fail twice',
+      objective: 'Use both calls in the overridden session budget.',
+      acceptanceCriteria: ['Two attempts are recorded.'],
+      dependencies: [],
+      verificationProfile: 'docs',
+      risk: 'normal',
+      status: 'pending',
+      attempts: [],
+      verification: null,
+      commit: null,
+    }],
+    checkpointVerification: [],
+    finalVerification: null,
+    finalReview: null,
+    events: [],
+    sessions: [],
+  }))
+
+  const fakeCodex = join(bin, 'codex')
+  await writeFile(fakeCodex, '#!/usr/bin/env bash\nexit 1\n')
+  await chmod(fakeCodex, 0o755)
+  await run('git', ['init', '-q'], { cwd: repo })
+  await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: repo })
+  await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: repo })
+  await run('git', ['add', '.'], { cwd: repo })
+  await run('git', ['commit', '-qm', 'initial'], { cwd: repo })
+
+  const result = await run(process.execPath, [
+    runnerPath,
+    'resume',
+    runDirectory,
+    '--max-hours',
+    '12',
+    '--max-codex-calls',
+    '2',
+  ], {
+    cwd: repo,
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  })
+
+  assert.equal(result.code, 3, result.stderr || result.stdout)
+  const state = JSON.parse(await readFile(join(runPath, 'state.json'), 'utf8'))
+  assert.equal(state.status, 'BUDGET_EXHAUSTED')
+  assert.equal(state.tasks[0].attempts.length, 2)
+  assert.equal(state.codexCalls, 2)
+  assert.deepEqual(state.sessions.at(-1).budget, { maxHours: 12, maxCodexCalls: 2 })
 })
