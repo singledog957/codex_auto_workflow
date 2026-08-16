@@ -2,20 +2,47 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: ./auto-workflow/resume.sh <run-directory>"
+  echo "Usage: ./auto-workflow/resume.sh <run-directory> [--max-hours HOURS] [--max-codex-calls CALLS]"
 }
 
-if [[ $# -ne 1 ]]; then
+if [[ $# -lt 1 ]]; then
   usage
   exit 64
 fi
 
 run_directory=${1%/}
+shift
+budget_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --max-hours|--max-codex-calls)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for $1" >&2
+        exit 64
+      fi
+      budget_args+=("$1" "$2")
+      shift 2
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 64
+      ;;
+  esac
+done
+
 if [[ $run_directory = /* ]]; then
   echo "Use a repository-relative run directory, not an absolute path." >&2
   exit 64
 fi
 
+script_dir=$(dirname "${BASH_SOURCE[0]}")
+script_dir=$(cd "$script_dir" && pwd)
+runner_path="$script_dir/runner.mjs"
+if [[ ! -f $runner_path ]]; then
+  echo "Runner not found: $runner_path" >&2
+  exit 66
+fi
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
@@ -58,8 +85,14 @@ fi
 
 operator_log="$run_path/operator.log"
 node_path=$(command -v node)
-printf -v runner_command 'exec %q %q %q %q >>%q 2>&1' \
-  "$node_path" auto-workflow/runner.mjs resume "$run_directory" "$operator_log"
+printf -v runner_command 'exec %q %q %q %q' \
+  "$node_path" "$runner_path" resume "$run_directory"
+for argument in "${budget_args[@]}"; do
+  printf -v quoted_argument ' %q' "$argument"
+  runner_command+="$quoted_argument"
+done
+printf -v quoted_log '%q' "$operator_log"
+runner_command+=" >>$quoted_log 2>&1"
 
 tmux new-session -d -s "$session_name" -c "$repo_root" "$runner_command"
 echo "$session_name" > "$run_path/tmux-session"

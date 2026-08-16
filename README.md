@@ -81,11 +81,15 @@ node auto-workflow/runner.mjs status auto-workflow/.runs/<run-id>
 在原 worktree 和原分支中运行：
 
 ```bash
-./auto-workflow/resume.sh auto-workflow/.runs/<run-id>
+./auto-workflow/resume.sh auto-workflow/.runs/<run-id> \
+  --max-hours 12 \
+  --max-codex-calls 100
 ```
 
 `resume.sh` 默认在原 worktree 中创建同名 tmux session；如果该 session 仍存活，它只报告当前 session，不会重复启动 runner。
-每次 resume 都获得新的 8 小时/30 次调用窗口。不要在这个 worktree 中混入手工修改；失败尝试留下的未提交代码会作为下一次修复的上下文继续使用。
+每次 resume 都获得一个新预算窗口。省略预算参数时继续使用该 run 的 `config.snapshot.json`；`--max-hours` 接受正数，
+`--max-codex-calls` 接受正整数。覆盖只影响这次 resume session，并记录到 `state.json` 的 session 历史，不会改写原始配置快照。
+不要在这个 worktree 中混入手工修改；失败尝试留下的未提交代码会作为下一次修复的上下文继续使用。
 
 如果最初的 Planner 在生成任务队列前失败，报告会显示 `T000 Planning bootstrap`。`resume` 会识别这个合成任务并重新运行 Planner，不需要删除 run 目录或重新创建 worktree。
 

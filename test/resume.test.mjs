@@ -30,15 +30,18 @@ test('resumes an interrupted workflow in its named tmux session', async (t) => {
   const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-resume-'))
   const runDirectory = 'auto-workflow/.runs/20260815T185628Z'
   const runPath = join(repo, runDirectory)
+  const nestedDirectory = join(repo, 'nested')
   const bin = join(repo, 'fake-bin')
   const capture = join(repo, 'tmux-args.txt')
   t.after(() => rm(repo, { recursive: true, force: true }))
 
   await mkdir(join(repo, 'auto-workflow'), { recursive: true })
   await mkdir(runPath, { recursive: true })
+  await mkdir(nestedDirectory)
   await mkdir(bin)
   await copyFile(resumeScript, join(repo, 'auto-workflow/resume.sh'))
   await chmod(join(repo, 'auto-workflow/resume.sh'), 0o755)
+  await writeFile(join(repo, 'auto-workflow/runner.mjs'), '')
   await writeFile(join(runPath, 'state.json'), '{}\n')
   await writeFile(join(runPath, 'config.snapshot.json'), '{}\n')
   await executable(join(bin, 'node'), '#!/usr/bin/env bash\nexit 0\n')
@@ -50,8 +53,15 @@ printf '%s\\n' "$@" > "$TMUX_CAPTURE"
 `)
 
   await run('git', ['init', '-q'], { cwd: repo })
-  const result = await run('/bin/bash', ['auto-workflow/resume.sh', runDirectory], {
-    cwd: repo,
+  const result = await run('/bin/bash', [
+    '../auto-workflow/resume.sh',
+    runDirectory,
+    '--max-hours',
+    '12',
+    '--max-codex-calls',
+    '100',
+  ], {
+    cwd: nestedDirectory,
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMUX_CAPTURE: capture },
   })
 
@@ -66,7 +76,8 @@ printf '%s\\n' "$@" > "$TMUX_CAPTURE"
     '-c',
     repo,
   ])
-  assert.match(tmuxArgs[6], new RegExp(`runner\\.mjs resume ${runDirectory}`))
+  assert.match(tmuxArgs[6], new RegExp(`${repo}/auto-workflow/runner\\.mjs resume ${runDirectory}`))
+  assert.match(tmuxArgs[6], /--max-hours 12 --max-codex-calls 100/)
   assert.match(tmuxArgs[6], /operator\.log/)
   assert.equal(await readFile(join(runPath, 'tmux-session'), 'utf8'), `${sessionName}\n`)
   assert.match(result.stdout, new RegExp(`tmux attach-session -t '${sessionName}'`))
