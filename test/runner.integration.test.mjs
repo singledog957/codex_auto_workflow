@@ -168,3 +168,97 @@ test('resume can override the snapshot budget for one new session', async (t) =>
   assert.equal(state.codexCalls, 2)
   assert.deepEqual(state.sessions.at(-1).budget, { maxHours: 12, maxCodexCalls: 2 })
 })
+
+test('checkpoint reviews are read-only and schedule bounded repair tasks instead of editing inline', async (t) => {
+  const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-checkpoint-'))
+  const bin = join(repo, 'fake-bin')
+  const runPath = join(repo, 'auto-workflow/.runs/checkpoint')
+  t.after(() => rm(repo, { recursive: true, force: true }))
+
+  await mkdir(bin)
+  await mkdir(join(repo, 'auto-workflow'))
+  await writeFile(join(repo, '.gitignore'), 'auto-workflow/.runs/\nfake-bin/\n')
+  await writeFile(join(repo, 'doc.md'), '# Phase checkpoint\n')
+  await writeFile(join(repo, 'config.json'), JSON.stringify({
+    execution: {
+      maxHours: 1,
+      maxCodexCalls: 8,
+      codexTimeoutMinutes: 1,
+      verificationTimeoutMinutes: 1,
+      checkpointEvery: 99,
+      maxCheckpointReplans: 2,
+    },
+    verification: {
+      profiles: { docs: ["node -e \"process.exit(0)\""] },
+      checkpoint: ["node -e \"process.exit(0)\""],
+      final: ["node -e \"process.exit(0)\""],
+    },
+  }))
+
+  const fakeCodex = join(bin, 'codex')
+  await writeFile(fakeCodex, `#!/usr/bin/env node
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+const args = process.argv.slice(2)
+const valueAfter = (flag) => args[args.indexOf(flag) + 1]
+const schema = args.includes('--output-schema') ? valueAfter('--output-schema') : null
+const output = valueAfter('--output-last-message')
+let prompt = ''
+for await (const chunk of process.stdin) prompt += chunk
+await appendFile('fake-bin/invocations.log', JSON.stringify({schema:schema ? basename(schema) : null,sandbox:valueAfter('--sandbox'),checkpoint:/read-only checkpoint reviewer/i.test(prompt)}) + '\\n')
+if (schema && basename(schema) === 'plan.schema.json') {
+  await writeFile(output, JSON.stringify({outcome:'work_remaining',summary:'checkpoint',tasks:[{id:'T001',taskType:'checkpoint',maxFiles:1,title:'Checkpoint P1',objective:'Verify the phase.',acceptanceCriteria:['repair.txt exists'],dependencies:[],verificationProfile:'docs',risk:'high'}]}))
+} else if (schema && basename(schema) === 'checkpoint.schema.json') {
+  let count = 0
+  try { count = Number(await readFile('fake-bin/checkpoint-count', 'utf8')) } catch {}
+  await writeFile('fake-bin/checkpoint-count', String(count + 1))
+  const review = count === 0
+    ? {status:'gaps_found',summary:'marker missing',findings:[{title:'Create repair marker',objective:'Create repair.txt.',acceptanceCriteria:['repair.txt exists'],verificationProfile:'docs',risk:'normal',maxFiles:1}]}
+    : {status:'approved',summary:'phase accepted',findings:[]}
+  await writeFile(output, JSON.stringify(review))
+} else if (schema && basename(schema) === 'review.schema.json') {
+  await writeFile(output, JSON.stringify({status:'approved',summary:'complete',blockers:[]}))
+} else {
+  await writeFile('repair.txt', 'repaired\\n')
+  await writeFile(output, 'implemented')
+}
+console.log(JSON.stringify({type:'turn.completed'}))
+`)
+  await chmod(fakeCodex, 0o755)
+
+  await run('git', ['init', '-q'], { cwd: repo })
+  await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: repo })
+  await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: repo })
+  await run('git', ['add', '.'], { cwd: repo })
+  await run('git', ['commit', '-qm', 'initial'], { cwd: repo })
+
+  const result = await run(process.execPath, [
+    runnerPath,
+    'run',
+    'doc.md',
+    '--config',
+    'config.json',
+    '--run-dir',
+    'auto-workflow/.runs/checkpoint',
+  ], { cwd: repo, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } })
+
+  assert.equal(result.code, 0, result.stderr || result.stdout)
+  const state = JSON.parse(await readFile(join(runPath, 'state.json'), 'utf8'))
+  const checkpoint = state.tasks.find((task) => task.id === 'T001')
+  const repair = state.tasks.find((task) => task.id === 'T002')
+  assert.equal(state.status, 'COMPLETE')
+  assert.equal(checkpoint.status, 'completed')
+  assert.equal(checkpoint.checkpointReplans, 1)
+  assert.equal(checkpoint.attempts[0].status, 'findings')
+  assert.equal(repair.status, 'completed')
+  assert.equal(await readFile(join(repo, 'repair.txt'), 'utf8'), 'repaired\n')
+
+  const invocations = (await readFile(join(bin, 'invocations.log'), 'utf8'))
+    .trim().split('\n').map((line) => JSON.parse(line))
+  const checkpointCalls = invocations.filter((invocation) => invocation.checkpoint)
+  assert.equal(checkpointCalls.length, 2)
+  assert.ok(checkpointCalls.every((invocation) => invocation.sandbox === 'read-only'))
+  const log = await run('git', ['log', '--oneline'], { cwd: repo })
+  assert.match(log.stdout, /auto: complete T002/)
+  assert.doesNotMatch(log.stdout, /auto: complete T001/)
+})

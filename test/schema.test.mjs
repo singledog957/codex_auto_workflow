@@ -37,7 +37,7 @@ function inspectSchema(node, path = '$') {
   return findings
 }
 
-for (const filename of ['plan.schema.json', 'review.schema.json']) {
+for (const filename of ['plan.schema.json', 'review.schema.json', 'checkpoint.schema.json']) {
   test(`${filename} stays inside the strict Structured Outputs subset`, async () => {
     const schema = JSON.parse(await readFile(join(workflowRoot, 'schemas', filename), 'utf8'))
     assert.deepEqual(inspectSchema(schema), [])

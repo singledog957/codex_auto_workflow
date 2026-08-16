@@ -7,12 +7,21 @@ import process from 'node:process'
 import { inspectionSandbox, modelForTaskAttempt, resolveConfig, verificationCommands } from './lib/config.mjs'
 import { runCodex } from './lib/codex.mjs'
 import { readJson, writeJsonAtomic, writeText } from './lib/files.mjs'
-import { commitCheckpoint, gitBranch, gitHead, gitInvariantViolation, gitStatus } from './lib/git.mjs'
+import {
+  commitCheckpoint,
+  gitBranch,
+  gitChangedFiles,
+  gitHead,
+  gitInvariantViolation,
+  gitStatus,
+} from './lib/git.mjs'
 import { runCommands } from './lib/process.mjs'
-import { plannerPrompt, reviewerPrompt, workerPrompt } from './lib/prompts.mjs'
+import { checkpointPrompt, plannerPrompt, reviewerPrompt, workerPrompt } from './lib/prompts.mjs'
 import { renderReport } from './lib/report.mjs'
 import {
+  addCheckpointFindings,
   createRunState,
+  effectiveTaskType,
   isPlanningBootstrapState,
   markAttemptFailed,
   markTaskCompleted,
@@ -20,6 +29,7 @@ import {
   recoverInterruptedState,
   startAttempt,
   terminalStatus,
+  validateCheckpointReview,
   validatePlan,
 } from './lib/state.mjs'
 
@@ -27,6 +37,7 @@ const workflowRoot = dirname(new URL(import.meta.url).pathname)
 const defaultConfigPath = join(workflowRoot, 'config.json')
 const planSchemaPath = join(workflowRoot, 'schemas', 'plan.schema.json')
 const reviewSchemaPath = join(workflowRoot, 'schemas', 'review.schema.json')
+const checkpointSchemaPath = join(workflowRoot, 'schemas', 'checkpoint.schema.json')
 
 function parseOptions(argv) {
   const [command = 'help', positional, ...rest] = argv
@@ -107,6 +118,25 @@ async function saveState(runDir, state) {
   await writeText(join(runDir, 'REPORT.md'), renderReport(state))
 }
 
+async function saveExpandedPlan(runDir, state) {
+  const tasks = state.tasks.map((task) => ({
+    id: task.id,
+    taskType: effectiveTaskType(task),
+    maxFiles: task.maxFiles ?? 5,
+    title: task.title,
+    objective: task.objective,
+    acceptanceCriteria: task.acceptanceCriteria,
+    dependencies: task.dependencies,
+    verificationProfile: task.verificationProfile,
+    risk: task.risk,
+  }))
+  await writeJsonAtomic(join(runDir, 'plan.json'), {
+    outcome: state.planOutcome,
+    summary: state.planSummary,
+    tasks,
+  })
+}
+
 function previewPlan(markdown) {
   const headings = [...markdown.matchAll(/^####\s+(I-\d+)[：:]\s*(.+)$/gm)]
   const selected = headings.length ? headings : [[null, 'I-00', 'Review source document']]
@@ -181,7 +211,7 @@ async function ensureClean(repoRoot, config) {
   }
 }
 
-async function runTask({ task, state, repoRoot, runDir, config, deadline, session }) {
+async function runImplementationTask({ task, state, repoRoot, runDir, config, deadline, session }) {
   while (task.status === 'pending') {
     const attemptIndex = task.attempts.length
     const route = modelForTaskAttempt(config, task, attemptIndex)
@@ -232,6 +262,16 @@ async function runTask({ task, state, repoRoot, runDir, config, deadline, sessio
       markAttemptFailed(state, task.id, {
         model: route.model,
         reason: invariantViolation,
+        terminal: true,
+      })
+      await saveState(runDir, state)
+      return
+    }
+    const changedFiles = await gitChangedFiles(repoRoot)
+    if (task.maxFiles !== undefined && changedFiles.length > task.maxFiles) {
+      markAttemptFailed(state, task.id, {
+        model: route.model,
+        reason: `Hard file budget exceeded: changed ${changedFiles.length} files, limit ${task.maxFiles}. ${changedFiles.join(', ')}`,
         terminal: true,
       })
       await saveState(runDir, state)
@@ -288,6 +328,132 @@ async function runTask({ task, state, repoRoot, runDir, config, deadline, sessio
     if (checkpointDue) state.completedSinceCheckpoint = 0
     await saveState(runDir, state)
   }
+}
+
+async function runCheckpointTask({ task, state, repoRoot, runDir, config, deadline, session }) {
+  if (remainingTime(deadline) === 0 || session.calls >= config.execution.maxCodexCalls) {
+    state.status = 'BUDGET_EXHAUSTED'
+    return
+  }
+
+  const attemptNumber = task.attempts.length + 1
+  const model = config.models.reviewer.model
+  const logPath = join(runDir, 'logs', `${task.id}-checkpoint-${attemptNumber}-${model}.jsonl`)
+  const outputPath = join(runDir, 'logs', `${task.id}-checkpoint-${attemptNumber}-review.json`)
+  startAttempt(state, task.id, {
+    model,
+    reasoningEffort: config.models.reviewer.reasoningEffort,
+    log: relative(repoRoot, logPath),
+  })
+  session.calls += 1
+  await saveState(runDir, state)
+
+  const taskVerification = await verification({
+    commands: verificationCommands(config, task.verificationProfile),
+    repoRoot,
+    runDir,
+    name: `${task.id}-checkpoint-${attemptNumber}-verify`,
+    config,
+    deadline,
+  })
+  const verificationEvidence = taskVerification.status === 'passed'
+    ? `PASSED: ${taskVerification.commands.join(' && ')}`
+    : `FAILED at ${taskVerification.failedCommand}\n${taskVerification.failureTail}`
+  const gitBefore = {
+    head: await gitHead(repoRoot),
+    branch: await gitBranch(repoRoot),
+    changedFiles: await gitChangedFiles(repoRoot),
+  }
+  const result = await runCodex({
+    prompt: checkpointPrompt({
+      sourceDocument: state.sourceDocument,
+      task,
+      verificationEvidence,
+    }),
+    cwd: repoRoot,
+    model,
+    reasoningEffort: config.models.reviewer.reasoningEffort,
+    sandbox: inspectionSandbox(config),
+    outputSchema: checkpointSchemaPath,
+    outputLastMessage: outputPath,
+    logPath,
+    timeoutMs: cappedTimeout(config.execution.codexTimeoutMinutes, deadline),
+  })
+  const gitAfter = {
+    head: await gitHead(repoRoot),
+    branch: await gitBranch(repoRoot),
+    changedFiles: await gitChangedFiles(repoRoot),
+  }
+  const invariantViolation = gitInvariantViolation(gitBefore, gitAfter)
+  const changedWorktree = JSON.stringify(gitBefore.changedFiles) !== JSON.stringify(gitAfter.changedFiles)
+  if (invariantViolation || changedWorktree) {
+    markAttemptFailed(state, task.id, {
+      model,
+      reason: invariantViolation ?? 'Checkpoint reviewer modified the Git worktree during a read-only review.',
+      terminal: true,
+    })
+    await saveState(runDir, state)
+    return
+  }
+  if (!result.ok) {
+    const reason = result.timedOut
+      ? 'Checkpoint review timed out.'
+      : `Checkpoint review exited unsuccessfully (${result.exitCode ?? result.signal ?? result.error}). ${result.stderrTail}`
+    markAttemptFailed(state, task.id, { model, reason, terminal: true })
+    await saveState(runDir, state)
+    return
+  }
+
+  let review
+  try {
+    review = validateCheckpointReview(await readJson(outputPath))
+  } catch (error) {
+    markAttemptFailed(state, task.id, {
+      model,
+      reason: `Checkpoint review returned invalid structured output: ${error.message}`,
+      terminal: true,
+    })
+    await saveState(runDir, state)
+    return
+  }
+  if (review.status === 'gaps_found') {
+    if ((task.checkpointReplans ?? 0) >= config.execution.maxCheckpointReplans) {
+      markAttemptFailed(state, task.id, {
+        model,
+        reason: `Checkpoint still has gaps after ${config.execution.maxCheckpointReplans} bounded replanning cycle(s): ${review.summary}`,
+        terminal: true,
+      })
+      await saveState(runDir, state)
+      return
+    }
+    addCheckpointFindings(state, task.id, review)
+    await saveExpandedPlan(runDir, state)
+    await saveState(runDir, state)
+    return
+  }
+  if (taskVerification.status !== 'passed') {
+    markAttemptFailed(state, task.id, {
+      model,
+      reason: 'Checkpoint reviewer approved despite failed controller verification.',
+      terminal: true,
+      log: taskVerification.log,
+    })
+    await saveState(runDir, state)
+    return
+  }
+
+  markTaskCompleted(state, task.id, {
+    commit: await gitHead(repoRoot),
+    verification: taskVerification,
+    countForCheckpoint: false,
+  })
+  await saveState(runDir, state)
+}
+
+async function runTask(context) {
+  return effectiveTaskType(context.task) === 'checkpoint'
+    ? runCheckpointTask(context)
+    : runImplementationTask(context)
 }
 
 async function finalize({ state, repoRoot, runDir, config, deadline, session }) {
