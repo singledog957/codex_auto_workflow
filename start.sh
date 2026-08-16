@@ -40,6 +40,10 @@ fi
 
 codex --version >/dev/null
 codex login status >/dev/null
+if ! command -v tmux >/dev/null; then
+  echo "tmux is required for detached workflow sessions." >&2
+  exit 69
+fi
 
 for dependency_directory in backend/node_modules frontend/node_modules; do
   if [[ ! -d "$repo_root/$dependency_directory" ]]; then
@@ -69,15 +73,20 @@ if [[ $mode == foreground ]]; then
 fi
 
 operator_log="$worktree_path/$run_directory/operator.log"
+session_name="auto-workflow-$run_id"
+node_path=$(command -v node)
+printf -v runner_command 'exec %q %q %q %q %q %q %q %q >%q 2>&1' \
+  "$node_path" auto-workflow/runner.mjs run "$source_document" \
+  --run-id "$run_id" --run-dir "$run_directory" "$operator_log"
 cd "$worktree_path"
-nohup node auto-workflow/runner.mjs run "$source_document" --run-id "$run_id" --run-dir "$run_directory" \
-  >"$operator_log" 2>&1 </dev/null &
-runner_pid=$!
-echo "$runner_pid" > "$worktree_path/$run_directory/pid"
+tmux new-session -d -s "$session_name" -c "$worktree_path" "$runner_command"
+echo "$session_name" > "$worktree_path/$run_directory/tmux-session"
 
-echo "PID:      $runner_pid"
+echo "Session:  $session_name"
 echo "Log:      $operator_log"
 echo
-echo "The run is detached. The computer must remain powered on and must not suspend."
+echo "The run is detached in tmux. The computer must remain powered on and must not suspend."
+echo "Attach with:"
+echo "  tmux attach-session -t '$session_name'"
 echo "Check status later with:"
 echo "  cd '$worktree_path' && node auto-workflow/runner.mjs status '$run_directory'"
