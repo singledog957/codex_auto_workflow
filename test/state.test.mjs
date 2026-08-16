@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  addCheckpointFindings,
   createRunState,
+  effectiveTaskType,
   isPlanningBootstrapState,
   markAttemptFailed,
   markTaskCompleted,
@@ -137,4 +139,66 @@ test('reports complete only after tasks, final gates, and final review pass', ()
   assert.equal(terminalStatus(state), 'RUNNING')
   state.finalReview = { status: 'approved', blockers: [] }
   assert.equal(terminalStatus(state), 'COMPLETE')
+})
+
+test('recognizes explicit and legacy checkpoint tasks without changing legacy implementation tasks', () => {
+  assert.equal(effectiveTaskType({ taskType: 'checkpoint', title: 'Phase gate' }), 'checkpoint')
+  assert.equal(effectiveTaskType({ title: 'Checkpoint P4 and qualification' }), 'checkpoint')
+  assert.equal(effectiveTaskType({ title: 'Implement checkpoint persistence' }), 'implementation')
+})
+
+test('turns checkpoint findings into bounded repair tasks before retrying the checkpoint', () => {
+  const checkpointPlan = {
+    outcome: 'work_remaining',
+    summary: 'checkpoint plan',
+    tasks: [
+      { ...plan.tasks[0], taskType: 'implementation', maxFiles: 5 },
+      {
+        ...plan.tasks[1],
+        taskType: 'checkpoint',
+        maxFiles: 1,
+        title: 'Checkpoint P1',
+        dependencies: ['T001'],
+      },
+      {
+        ...plan.tasks[1],
+        id: 'T003',
+        taskType: 'implementation',
+        maxFiles: 5,
+        title: 'later work',
+        dependencies: ['T002'],
+      },
+    ],
+  }
+  const state = createRunState({
+    sourceDocument: 'doc/plan.md',
+    plan: checkpointPlan,
+    now: '2026-08-16T00:00:00.000Z',
+  })
+  markTaskCompleted(state, 'T001', { now: '2026-08-16T00:10:00.000Z' })
+  state.tasks[1].status = 'running'
+  state.tasks[1].attempts.push({ model: 'gpt-5.6-sol', status: 'started' })
+
+  const added = addCheckpointFindings(state, 'T002', {
+    status: 'gaps_found',
+    summary: 'A release conflict is not recovered.',
+    findings: [{
+      title: 'Recover release conflicts',
+      objective: 'Reload the current revision before retrying release.',
+      acceptanceCriteria: ['A stale release retries with the current revision.'],
+      verificationProfile: 'frontend',
+      risk: 'normal',
+      maxFiles: 3,
+    }],
+  }, { now: '2026-08-16T00:20:00.000Z' })
+
+  assert.deepEqual(added.map((task) => task.id), ['T004'])
+  assert.equal(state.tasks.find((task) => task.id === 'T002').status, 'pending')
+  assert.deepEqual(state.tasks.find((task) => task.id === 'T002').dependencies, ['T004'])
+  assert.deepEqual(state.tasks.find((task) => task.id === 'T004').dependencies, ['T001'])
+  assert.equal(state.tasks.find((task) => task.id === 'T004').taskType, 'implementation')
+  assert.equal(state.tasks.find((task) => task.id === 'T004').maxFiles, 3)
+  assert.equal(state.tasks.find((task) => task.id === 'T003').dependencies[0], 'T002')
+  assert.equal(nextRunnableTask(state).id, 'T004')
+  assert.equal(state.tasks.find((task) => task.id === 'T002').attempts.at(-1).status, 'findings')
 })
