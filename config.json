@@ -40,8 +40,8 @@
   "execution": {
     "sandbox": "danger-full-access",
     "allowDangerFullAccess": true,
-    "maxHours": 8,
-    "maxCodexCalls": 30,
+    "maxHours": 12,
+    "maxCodexCalls": 100,
     "codexTimeoutMinutes": 90,
     "verificationTimeoutMinutes": 30,
     "checkpointEvery": 3,
