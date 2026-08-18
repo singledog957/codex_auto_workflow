@@ -97,6 +97,35 @@ console.log(JSON.stringify({type:'turn.completed'}))
   assert.equal(commitCount.stdout.trim(), '1')
 })
 
+test('blocks an implementation task when the worker explicitly reports a blocker', async (t) => {
+  const { repo, bin } = await createRepository(t, 'auto-workflow-worker-blocked-', {
+    fakeCodex: `#!/usr/bin/env node
+import { writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+const args = process.argv.slice(2)
+const valueAfter = (flag) => args[args.indexOf(flag) + 1]
+const schema = args.includes('--output-schema') ? valueAfter('--output-schema') : null
+const output = valueAfter('--output-last-message')
+if (schema && basename(schema) === 'plan.schema.json') {
+  await writeFile(output, JSON.stringify({outcome:'work_remaining',summary:'blocked worker',tasks:[{id:'T001',taskType:'implementation',maxFiles:1,title:'bounded change',objective:'Create one marker.',acceptanceCriteria:['one marker exists'],dependencies:[],verificationProfile:'docs',risk:'normal'}]}))
+} else {
+  await writeFile(output, 'WORKER_OUTCOME: BLOCKED\\nThe task cannot fit its hard file budget.')
+}
+console.log(JSON.stringify({type:'turn.completed'}))
+`,
+  })
+
+  const result = await execute(repo, bin, 'worker-blocked')
+
+  assert.equal(result.code, 2, result.stderr || result.stdout)
+  const state = JSON.parse(await readFile(join(repo, 'auto-workflow/.runs/worker-blocked/state.json'), 'utf8'))
+  assert.equal(state.status, 'BLOCKED')
+  assert.equal(state.tasks[0].attempts.length, 1)
+  assert.match(state.tasks[0].attempts[0].reason, /cannot fit its hard file budget/i)
+  const commitCount = await run('git', ['rev-list', '--count', 'HEAD'], { cwd: repo })
+  assert.equal(commitCount.stdout.trim(), '1')
+})
+
 test('blocks a checkpoint that writes to the worktree under danger-full-access', async (t) => {
   const { repo, bin } = await createRepository(t, 'auto-workflow-checkpoint-write-', {
     dangerFullAccess: true,

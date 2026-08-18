@@ -214,6 +214,13 @@ async function ensureClean(repoRoot, config) {
   }
 }
 
+async function explicitWorkerBlocker(outputPath) {
+  const output = await readFile(outputPath, 'utf8')
+  const [outcome, ...details] = output.trim().split(/\r?\n/)
+  if (outcome !== 'WORKER_OUTCOME: BLOCKED') return null
+  return details.join('\n').trim() || 'Worker reported that the task is blocked.'
+}
+
 async function runImplementationTask({ task, state, repoRoot, runDir, config, deadline, session }) {
   while (task.status === 'pending') {
     const attemptIndex = task.attempts.length
@@ -288,6 +295,17 @@ async function runImplementationTask({ task, state, repoRoot, runDir, config, de
       markAttemptFailed(state, task.id, { model: route.model, reason, terminal })
       await saveState(runDir, state)
       continue
+    }
+
+    const workerBlocker = await explicitWorkerBlocker(outputPath)
+    if (workerBlocker) {
+      markAttemptFailed(state, task.id, {
+        model: route.model,
+        reason: `Worker reported a blocker: ${workerBlocker}`,
+        terminal: true,
+      })
+      await saveState(runDir, state)
+      return
     }
 
     const taskVerification = await verification({
