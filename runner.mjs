@@ -17,6 +17,7 @@ import {
   gitWorktreeFingerprint,
 } from './lib/git.mjs'
 import { runCommands } from './lib/process.mjs'
+import { controllerHealth, processExit } from './lib/supervision.mjs'
 import { checkpointPrompt, plannerPrompt, reviewerPrompt, workerPrompt } from './lib/prompts.mjs'
 import { renderReport } from './lib/report.mjs'
 import {
@@ -721,7 +722,31 @@ async function showStatus(options) {
   const repoRoot = await repositoryRoot(process.cwd())
   const runDir = ensureInsideRepository(repoRoot, options.positional, 'Run directory')
   const state = await readJson(join(runDir, 'state.json'))
-  console.log(renderReport(state))
+  let supervisor = null
+  try {
+    supervisor = await readJson(join(runDir, 'supervisor.json'))
+  } catch {}
+  let tmuxAlive
+  try {
+    const session = (await readFile(join(runDir, 'tmux-session'), 'utf8')).trim()
+    tmuxAlive = Boolean(session)
+      && (await processExit('tmux', ['has-session', '-t', `=${session}`], { stdio: 'ignore' })).code === 0
+  } catch {
+    tmuxAlive = false
+  }
+  const health = controllerHealth({
+    workflowStatus: terminalStatus(state),
+    supervisor,
+    tmuxAlive,
+  })
+  const controllerReport = [
+    '## Controller',
+    '',
+    `- Controller: **${health.status}**`,
+    `- Detail: ${health.message}`,
+    '',
+  ].join('\n')
+  console.log(`${renderReport(state)}${controllerReport}`)
   return state
 }
 

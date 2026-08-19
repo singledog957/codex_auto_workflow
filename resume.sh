@@ -38,9 +38,9 @@ fi
 
 script_dir=$(dirname "${BASH_SOURCE[0]}")
 script_dir=$(cd "$script_dir" && pwd)
-runner_path="$script_dir/runner.mjs"
-if [[ ! -f $runner_path ]]; then
-  echo "Runner not found: $runner_path" >&2
+supervisor_path="$script_dir/supervisor.mjs"
+if [[ ! -f $supervisor_path ]]; then
+  echo "Supervisor not found: $supervisor_path" >&2
   exit 66
 fi
 repo_root=$(git rev-parse --show-toplevel)
@@ -72,6 +72,12 @@ if ! command -v tmux >/dev/null; then
   echo "tmux is required for detached workflow sessions." >&2
   exit 69
 fi
+for command in systemd-run systemctl; do
+  if ! command -v "$command" >/dev/null; then
+    echo "$command is required for resource-contained workflow sessions." >&2
+    exit 69
+  fi
+done
 
 run_id=$(basename "$run_path")
 safe_run_id=${run_id//[^[:alnum:]_-]/-}
@@ -86,7 +92,7 @@ fi
 operator_log="$run_path/operator.log"
 node_path=$(command -v node)
 printf -v runner_command 'exec %q %q %q %q' \
-  "$node_path" "$runner_path" resume "$run_directory"
+  "$node_path" "$supervisor_path" resume "$run_directory"
 for argument in "${budget_args[@]}"; do
   printf -v quoted_argument ' %q' "$argument"
   runner_command+="$quoted_argument"

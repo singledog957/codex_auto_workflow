@@ -43,6 +43,7 @@ test('starts a detached workflow in a named tmux session', async (t) => {
   await mkdir(bin)
   await copyFile(startScript, join(repo, 'auto-workflow/start.sh'))
   await chmod(join(repo, 'auto-workflow/start.sh'), 0o755)
+  await writeFile(join(repo, 'auto-workflow/supervisor.mjs'), '')
   await writeFile(join(repo, '.gitignore'), 'node_modules/\nfake-bin/\n')
   await writeFile(join(repo, 'backend/.gitkeep'), '')
   await writeFile(join(repo, 'frontend/.gitkeep'), '')
@@ -82,7 +83,7 @@ printf '%s\\n' "$@" > "$TMUX_CAPTURE"
     '-c',
     worktreePath,
   ])
-  assert.match(tmuxArgs[6], /runner\.mjs run doc\.md/)
+  assert.match(tmuxArgs[6], /supervisor\.mjs run doc\.md/)
   assert.match(tmuxArgs[6], /operator\.log/)
   assert.equal(await readFile(join(runDataMatch[1], 'tmux-session'), 'utf8'), `${sessionName}\n`)
   assert.match(result.stdout, new RegExp(`tmux attach-session -t '${sessionName}'`))

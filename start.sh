@@ -44,6 +44,12 @@ if ! command -v tmux >/dev/null; then
   echo "tmux is required for detached workflow sessions." >&2
   exit 69
 fi
+for command in systemd-run systemctl; do
+  if ! command -v "$command" >/dev/null; then
+    echo "$command is required for resource-contained workflow sessions." >&2
+    exit 69
+  fi
+done
 
 for dependency_directory in backend/node_modules frontend/node_modules; do
   if [[ ! -d "$repo_root/$dependency_directory" ]]; then
@@ -69,14 +75,14 @@ echo "Run data: $worktree_path/$run_directory"
 
 if [[ $mode == foreground ]]; then
   cd "$worktree_path"
-  exec node auto-workflow/runner.mjs run "$source_document" --run-id "$run_id" --run-dir "$run_directory"
+  exec node auto-workflow/supervisor.mjs run "$source_document" --run-id "$run_id" --run-dir "$run_directory"
 fi
 
 operator_log="$worktree_path/$run_directory/operator.log"
 session_name="auto-workflow-$run_id"
 node_path=$(command -v node)
 printf -v runner_command 'exec %q %q %q %q %q %q %q %q >%q 2>&1' \
-  "$node_path" auto-workflow/runner.mjs run "$source_document" \
+  "$node_path" auto-workflow/supervisor.mjs run "$source_document" \
   --run-id "$run_id" --run-dir "$run_directory" "$operator_log"
 cd "$worktree_path"
 tmux new-session -d -s "$session_name" -c "$worktree_path" "$runner_command"

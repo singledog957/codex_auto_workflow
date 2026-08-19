@@ -169,6 +169,39 @@ test('resume can override the snapshot budget for one new session', async (t) =>
   assert.deepEqual(state.sessions.at(-1).budget, { maxHours: 12, maxCodexCalls: 2 })
 })
 
+test('status exposes a dead controller instead of reporting a stale RUNNING state as healthy', async (t) => {
+  const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-status-offline-'))
+  const runDirectory = 'auto-workflow/.runs/offline'
+  const runPath = join(repo, runDirectory)
+  t.after(() => rm(repo, { recursive: true, force: true }))
+
+  await mkdir(runPath, { recursive: true })
+  await writeFile(join(repo, '.gitignore'), 'auto-workflow/.runs/\n')
+  await writeFile(join(runPath, 'state.json'), JSON.stringify({
+    sourceDocument: 'doc.md',
+    status: 'RUNNING',
+    startedAt: '2026-08-19T00:00:00.000Z',
+    updatedAt: '2026-08-19T01:00:00.000Z',
+    codexCalls: 1,
+    tasks: [{
+      id: 'T001', title: 'unfinished', status: 'pending', attempts: [], dependencies: [],
+    }],
+    finalVerification: null,
+    finalReview: null,
+  }))
+  await writeFile(join(runPath, 'supervisor.json'), JSON.stringify({
+    status: 'stopped',
+    message: 'restart limit reached',
+  }))
+  await run('git', ['init', '-q'], { cwd: repo })
+
+  const result = await run(process.execPath, [runnerPath, 'status', runDirectory], { cwd: repo })
+
+  assert.equal(result.code, 2, result.stderr || result.stdout)
+  assert.match(result.stdout, /Controller: \*\*OFFLINE\*\*/)
+  assert.match(result.stdout, /restart limit reached/)
+})
+
 test('checkpoint reviews are read-only and schedule bounded repair tasks instead of editing inline', async (t) => {
   const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-checkpoint-'))
   const bin = join(repo, 'fake-bin')
