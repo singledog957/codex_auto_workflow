@@ -33,8 +33,7 @@
             "items": { "type": "string" }
           },
           "verificationProfile": {
-            "type": "string",
-            "enum": ["backend", "frontend", "full", "docs"]
+            "type": "string"
           },
           "risk": { "type": "string", "enum": ["normal", "high"] },
           "maxFiles": { "type": "integer", "minimum": 1, "maximum": 20 }

@@ -106,6 +106,17 @@ test('accepts a twenty-file task budget and rejects larger tasks', () => {
   }), /1 to 20/i)
 })
 
+test('validates task profiles against the names supplied by user config', () => {
+  const customPlan = {
+    outcome: 'work_remaining',
+    summary: 'custom verification',
+    tasks: [{ ...plan.tasks[0], verificationProfile: 'cargo' }],
+  }
+
+  assert.doesNotThrow(() => validatePlan(customPlan, ['cargo', 'format']))
+  assert.throws(() => validatePlan(customPlan, ['pytest']), /invalid verification profile/i)
+})
+
 test('recognizes a legacy zero-task false success as retryable planning', () => {
   const state = createRunState({
     sourceDocument: 'doc/plan.md',

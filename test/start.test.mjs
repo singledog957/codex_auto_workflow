@@ -38,8 +38,6 @@ test('starts a detached workflow in a named tmux session', async (t) => {
   })
 
   await mkdir(join(repo, 'auto-workflow'), { recursive: true })
-  await mkdir(join(repo, 'backend/node_modules'), { recursive: true })
-  await mkdir(join(repo, 'frontend/node_modules'), { recursive: true })
   await mkdir(bin)
   await copyFile(startScript, join(repo, 'auto-workflow/start.sh'))
   await chmod(join(repo, 'auto-workflow/start.sh'), 0o755)
@@ -47,8 +45,6 @@ test('starts a detached workflow in a named tmux session', async (t) => {
   await writeFile(join(repo, 'auto-workflow/.gitignore'), 'config.json\n')
   await writeFile(join(repo, 'auto-workflow/config.json'), '{"verification":{"profiles":{"docs":["custom docs gate"]}}}\n')
   await writeFile(join(repo, '.gitignore'), 'auto-workflow/\nnode_modules/\nfake-bin/\n')
-  await writeFile(join(repo, 'backend/.gitkeep'), '')
-  await writeFile(join(repo, 'frontend/.gitkeep'), '')
   await writeFile(join(repo, 'doc.md'), '# Test workflow\n')
   await executable(join(bin, 'codex'), '#!/usr/bin/env bash\nexit 0\n')
   await executable(join(bin, 'node'), '#!/usr/bin/env bash\nexit 0\n')
@@ -110,8 +106,6 @@ test('clones the standalone workflow into the isolated product worktree', async 
 
   await mkdir(repo, { recursive: true })
   await mkdir(workflow)
-  await mkdir(join(repo, 'backend/node_modules'), { recursive: true })
-  await mkdir(join(repo, 'frontend/node_modules'), { recursive: true })
   await mkdir(bin)
   await copyFile(startScript, join(workflow, 'start.sh'))
   await chmod(join(workflow, 'start.sh'), 0o755)
@@ -128,8 +122,6 @@ test('clones the standalone workflow into the isolated product worktree', async 
     await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: gitRoot })
   }
   await writeFile(join(repo, '.gitignore'), 'auto-workflow/\nnode_modules/\n')
-  await writeFile(join(repo, 'backend/.gitkeep'), '')
-  await writeFile(join(repo, 'frontend/.gitkeep'), '')
   await writeFile(join(repo, 'doc.md'), '# Test workflow\n')
   await run('git', ['add', '.'], { cwd: repo })
   await run('git', ['commit', '-qm', 'initial product'], { cwd: repo })

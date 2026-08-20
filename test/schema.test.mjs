@@ -43,3 +43,17 @@ for (const filename of ['plan.schema.json', 'review.schema.json', 'checkpoint.sc
     assert.deepEqual(inspectSchema(schema), [])
   })
 }
+
+test('planner and checkpoint schemas allow user-defined profile names', async () => {
+  const planSchema = JSON.parse(await readFile(join(workflowRoot, 'schemas/plan.schema.json'), 'utf8'))
+  const checkpointSchema = JSON.parse(await readFile(join(workflowRoot, 'schemas/checkpoint.schema.json'), 'utf8'))
+
+  assert.deepEqual(
+    planSchema.properties.tasks.items.properties.verificationProfile,
+    { type: 'string' },
+  )
+  assert.deepEqual(
+    checkpointSchema.properties.findings.items.properties.verificationProfile,
+    { type: 'string' },
+  )
+})

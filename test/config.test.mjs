@@ -62,37 +62,37 @@ test('allows an explicit VM compatibility escape hatch and applies it to inspect
   assert.equal(inspectionSandbox(resolveConfig({})), 'read-only')
 })
 
-test('requires users to define every planner-visible verification profile', () => {
+test('accepts arbitrary user profiles and optional aggregate gates', () => {
   const verification = {
     profiles: {
-      backend: ['backend gate'],
-      frontend: ['frontend gate'],
-      full: ['full gate'],
-      docs: ['docs gate'],
+      unit: ['run unit tests'],
+      data_pipeline: ['validate the pipeline'],
     },
-    checkpoint: ['checkpoint gate'],
-    final: ['final gate'],
   }
 
-  assert.deepEqual(resolveUserConfig({ verification }).verification, verification)
+  assert.deepEqual(resolveUserConfig({ verification }).verification, {
+    profiles: verification.profiles,
+    checkpoint: [],
+    final: [],
+  })
   assert.throws(
-    () => resolveUserConfig({ verification: { ...verification, profiles: { docs: ['docs gate'] } } }),
-    /backend.*frontend.*full/i,
+    () => resolveUserConfig({ verification: { profiles: {} } }),
+    /at least one verification profile/i,
   )
   assert.throws(
     () => resolveUserConfig({
-      verification: { ...verification, profiles: { ...verification.profiles, custom: ['custom gate'] } },
+      verification: { profiles: { 'invalid profile': ['custom gate'] } },
     }),
-    /unsupported.*custom/i,
+    /invalid verification profile name/i,
   )
   assert.throws(
     () => resolveUserConfig({
-      verification: { ...verification, profiles: { ...verification.profiles, docs: ['  '] } },
+      verification: { profiles: { unit: ['  '] } },
     }),
-    /profile docs.*commands/i,
+    /profile unit.*commands/i,
   )
   assert.throws(
     () => resolveUserConfig({ verification: { ...verification, final: [''] } }),
-    /verification\.final.*commands/i,
+    /verification\.final.*command list/i,
   )
 })

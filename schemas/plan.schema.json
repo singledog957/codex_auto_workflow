@@ -46,8 +46,7 @@
             "items": { "type": "string", "pattern": "^T[0-9]{3,}$" }
           },
           "verificationProfile": {
-            "type": "string",
-            "enum": ["backend", "frontend", "full", "docs"]
+            "type": "string"
           },
           "risk": { "type": "string", "enum": ["normal", "high"] }
         }

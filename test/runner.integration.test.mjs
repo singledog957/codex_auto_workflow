@@ -20,7 +20,7 @@ function run(command, args, { cwd, env = process.env } = {}) {
   })
 }
 
-test('completes planner, worker, fixed gates, commit, and final review with a fake Codex', async () => {
+test('completes with a custom profile and no aggregate gates', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-integration-'))
   const bin = join(repo, 'fake-bin')
   await mkdir(bin)
@@ -37,13 +37,8 @@ test('completes planner, worker, fixed gates, commit, and final review with a fa
     },
     verification: {
       profiles: {
-        backend: ["node -e \"process.exit(0)\""],
-        frontend: ["node -e \"process.exit(0)\""],
-        full: ["node -e \"process.exit(0)\""],
-        docs: ["node -e \"process.exit(0)\""],
+        project: ["node -e \"process.exit(0)\""],
       },
-      checkpoint: ["node -e \"process.exit(0)\""],
-      final: ["node -e \"process.exit(0)\""],
     },
   }))
 
@@ -56,7 +51,7 @@ const valueAfter = (flag) => args[args.indexOf(flag) + 1]
 const schema = args.includes('--output-schema') ? valueAfter('--output-schema') : null
 const output = valueAfter('--output-last-message')
 if (schema && basename(schema) === 'plan.schema.json') {
-  await writeFile(output, JSON.stringify({outcome:'work_remaining',summary:'tiny',tasks:[{id:'T001',title:'create marker',objective:'Create done.txt.',acceptanceCriteria:['done.txt exists'],dependencies:[],verificationProfile:'docs',risk:'normal'}]}))
+  await writeFile(output, JSON.stringify({outcome:'work_remaining',summary:'tiny',tasks:[{id:'T001',title:'create marker',objective:'Create done.txt.',acceptanceCriteria:['done.txt exists'],dependencies:[],verificationProfile:'project',risk:'normal'}]}))
 } else if (schema && basename(schema) === 'review.schema.json') {
   await writeFile(output, JSON.stringify({status:'approved',summary:'complete',blockers:[]}))
 } else {
@@ -90,6 +85,8 @@ console.log(JSON.stringify({type:'turn.completed'}))
   const state = JSON.parse(await readFile(join(repo, 'auto-workflow/.runs/integration/state.json'), 'utf8'))
   assert.equal(state.status, 'COMPLETE')
   assert.equal(state.codexCalls, 3)
+  assert.deepEqual(state.checkpointVerification, [])
+  assert.deepEqual(state.finalVerification.commands, [])
   assert.equal(await readFile(join(repo, 'done.txt'), 'utf8'), 'done\n')
   const log = await run('git', ['log', '--oneline', '-2'], { cwd: repo })
   assert.match(log.stdout, /auto: complete T001/)

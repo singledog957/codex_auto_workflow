@@ -145,7 +145,7 @@ async function saveExpandedPlan(runDir, state) {
   })
 }
 
-function previewPlan(markdown) {
+function previewPlan(markdown, verificationProfile) {
   const headings = [...markdown.matchAll(/^####\s+(I-\d+)[：:]\s*(.+)$/gm)]
   const selected = headings.length ? headings : [[null, 'I-00', 'Review source document']]
   return {
@@ -159,7 +159,7 @@ function previewPlan(markdown) {
       objective: `Assess and implement the remaining scope of ${match[1]}.`,
       acceptanceCriteria: ['The real planning pass will replace this preview with repository-aware criteria.'],
       dependencies: index === 0 ? [] : [`T${String(index).padStart(3, '0')}`],
-      verificationProfile: 'full',
+      verificationProfile,
       risk: 'normal',
     })),
   }
@@ -208,7 +208,7 @@ async function createPlan({ sourceDocument, repoRoot, runDir, config, deadline }
   })
   if (!result.ok) throw new Error(`Planning failed. See ${logPath}: ${result.stderrTail}`)
   const plan = await readJson(outputPath)
-  validatePlan(plan)
+  validatePlan(plan, Object.keys(config.verification.profiles))
   await writeJsonAtomic(join(runDir, 'plan.json'), plan)
   return plan
 }
@@ -324,7 +324,8 @@ async function runImplementationTask({ task, state, repoRoot, runDir, config, de
       deadline,
     })
     let combinedVerification = taskVerification
-    const checkpointDue = taskVerification.status === 'passed'
+    const checkpointDue = config.verification.checkpoint.length > 0
+      && taskVerification.status === 'passed'
       && state.completedSinceCheckpoint + 1 >= config.execution.checkpointEvery
     if (checkpointDue) {
       const checkpoint = await verification({
@@ -397,6 +398,7 @@ async function runCheckpointTask({ task, state, repoRoot, runDir, config, deadli
       sourceDocument: state.sourceDocument,
       task,
       verificationEvidence,
+      verificationProfiles: Object.keys(config.verification.profiles),
     }),
     cwd: repoRoot,
     model,
@@ -434,7 +436,10 @@ async function runCheckpointTask({ task, state, repoRoot, runDir, config, deadli
 
   let review
   try {
-    review = validateCheckpointReview(await readJson(outputPath))
+    review = validateCheckpointReview(
+      await readJson(outputPath),
+      Object.keys(config.verification.profiles),
+    )
   } catch (error) {
     markAttemptFailed(state, task.id, {
       model,
@@ -454,7 +459,9 @@ async function runCheckpointTask({ task, state, repoRoot, runDir, config, deadli
       await saveState(runDir, state)
       return
     }
-    addCheckpointFindings(state, task.id, review)
+    addCheckpointFindings(state, task.id, review, {
+      verificationProfiles: Object.keys(config.verification.profiles),
+    })
     await saveState(runDir, state)
     await saveExpandedPlan(runDir, state)
     return
@@ -547,6 +554,7 @@ async function executeNew(options) {
   const sourceDocument = await resolveExistingInsideRepository(repoRoot, options.positional, 'Source document')
   const configPath = await resolveExistingInsideRepository(repoRoot, options.configPath ?? defaultConfigPath, 'Config')
   const config = await loadConfig(configPath)
+  const verificationProfiles = Object.keys(config.verification.profiles)
   const runId = options.runId ?? timestampId()
   const runDir = ensureInsideRepository(
     repoRoot,
@@ -559,9 +567,13 @@ async function executeNew(options) {
   await writeJsonAtomic(join(runDir, 'config.snapshot.json'), config)
 
   if (options.dryRun) {
-    const plan = previewPlan(await readFile(sourceDocument, 'utf8'))
+    const plan = previewPlan(await readFile(sourceDocument, 'utf8'), verificationProfiles[0])
     await writeJsonAtomic(join(runDir, 'plan.json'), plan)
-    const state = createRunState({ sourceDocument: relative(repoRoot, sourceDocument), plan })
+    const state = createRunState({
+      sourceDocument: relative(repoRoot, sourceDocument),
+      plan,
+      verificationProfiles,
+    })
     state.status = 'DRY_RUN'
     state.baseCommit = await gitHead(repoRoot)
     state.branch = await gitBranch(repoRoot)
@@ -589,11 +601,15 @@ async function executeNew(options) {
         objective: 'Create and validate the durable implementation plan.',
         acceptanceCriteria: ['A schema-valid repository-aware plan exists.'],
         dependencies: [],
-        verificationProfile: 'docs',
+        verificationProfile: verificationProfiles[0],
         risk: 'high',
       }],
     }
-    const failedState = createRunState({ sourceDocument: relative(repoRoot, sourceDocument), plan: failurePlan })
+    const failedState = createRunState({
+      sourceDocument: relative(repoRoot, sourceDocument),
+      plan: failurePlan,
+      verificationProfiles,
+    })
     failedState.baseCommit = await gitHead(repoRoot)
     failedState.branch = await gitBranch(repoRoot)
     failedState.codexCalls = 1
@@ -607,7 +623,11 @@ async function executeNew(options) {
     console.log(renderReport(failedState))
     return failedState
   }
-  const state = createRunState({ sourceDocument: relative(repoRoot, sourceDocument), plan })
+  const state = createRunState({
+    sourceDocument: relative(repoRoot, sourceDocument),
+    plan,
+    verificationProfiles,
+  })
   state.baseCommit = await gitHead(repoRoot)
   state.branch = await gitBranch(repoRoot)
   state.codexCalls = 1
@@ -676,7 +696,11 @@ async function executeResume(options) {
       return state
     }
 
-    const resumedState = createRunState({ sourceDocument: state.sourceDocument, plan })
+    const resumedState = createRunState({
+      sourceDocument: state.sourceDocument,
+      plan,
+      verificationProfiles: Object.keys(config.verification.profiles),
+    })
     resumedState.baseCommit = state.baseCommit
     resumedState.branch = state.branch
     resumedState.codexCalls = state.codexCalls

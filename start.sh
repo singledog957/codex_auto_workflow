@@ -76,13 +76,6 @@ for command in systemd-run systemctl; do
   fi
 done
 
-for dependency_directory in backend/node_modules frontend/node_modules; do
-  if [[ ! -d "$repo_root/$dependency_directory" ]]; then
-    echo "Missing $dependency_directory. Install the project dependencies before starting." >&2
-    exit 69
-  fi
-done
-
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 worktree_root="$workflow_root/.worktrees"
 worktree_path="$worktree_root/$run_id"
@@ -95,8 +88,6 @@ git clone --local --no-hardlinks --quiet "$workflow_root" "$worktree_path/auto-w
 git -C "$worktree_path/auto-workflow" checkout --quiet --detach "$workflow_head"
 install -m 600 "$workflow_config" "$worktree_path/auto-workflow/config.json"
 mkdir -p "$worktree_path/$run_directory"
-ln -s "$repo_root/backend/node_modules" "$worktree_path/backend/node_modules"
-ln -s "$repo_root/frontend/node_modules" "$worktree_path/frontend/node_modules"
 
 echo "Branch:   $branch_name"
 echo "Worktree: $worktree_path"

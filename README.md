@@ -8,9 +8,9 @@
 
 - **自动拆解**：Planner 阅读实施文档和现有代码，生成有依赖关系、文件数量上限和验收条件的任务队列。
 - **分级执行**：普通任务按 Luna → Luna → Terra → Sol 逐级重试；迁移、并发、鉴权、secret、公共契约等高风险任务直接使用 Sol。
-- **确定性验收**：Codex 只能选择 `backend`、`frontend`、`full`、`docs` 四种验证档位；真正执行的命令由用户本地的 `config.json` 固定，模型不能临时拼测试命令。
+- **确定性验收**：用户可以按项目任意命名验证 profile，例如 `pytest`、`cargo`、`docs-only` 或 `release`；Planner 只能从用户实际配置的名称中选择，不能临时拼测试命令。
 - **通过才提交**：Controller 检查命令退出码，验证通过后才创建 Git checkpoint commit；失败日志会成为下一次修复的上下文。
-- **阶段与最终审查**：默认每完成 3 项运行一次阶段门禁，最后再运行完整门禁和独立审查。
+- **可选聚合门禁**：需要时可配置周期性 `checkpoint` 和最终 `final` 命令组；不需要时可以省略。独立的最终代码审查仍会运行。
 - **可恢复运行**：计划、状态、测试证据和日志持续写入 `.runs/<run-id>/`，断电或预算耗尽后可继续。
 - **进程隔离**：每次执行位于独立产品 worktree；后台 supervisor 使用 tmux 和 systemd cgroup 管理整个进程树，默认内存上限为主机的 60%，异常时最多自动恢复 3 次。
 
@@ -25,7 +25,7 @@ Worker 修改代码 → Controller 运行固定门禁 → Git 提交
               ↑                ↓
               └── 失败重试 ────┘
                                ↓
-                   阶段检查 → 最终门禁 → 独立审查
+                   可选聚合门禁 → 独立审查
 ```
 
 ## 适用范围
@@ -41,9 +41,8 @@ Worker 修改代码 → Controller 运行固定门禁 → Git 提交
 
 - 模糊的产品想法或需要频繁人工决策的工作；
 - 直接操作生产环境、生产凭据或生产数据；
-- 没有测试门禁、无法判断“完成”的项目；
 - macOS、Windows，或没有 systemd user service 的 Linux 环境；
-- 不准备修改当前 Node.js 前后端适配器的其他项目结构。
+- 无法提供任何确定性检查来判断任务是否完成的项目。
 
 ## 5 分钟上手
 
@@ -55,8 +54,9 @@ Worker 修改代码 → Controller 运行固定门禁 → Git 提交
 - Node.js 24；
 - tmux；
 - 已安装并登录的 Codex CLI；
-- 一个干净、已提交的产品 Git 仓库；
-- 产品仓库中已经安装好的 `backend/node_modules` 和 `frontend/node_modules`。
+- 一个干净、已提交的产品 Git 仓库。
+
+Node.js 只用于运行 workflow；被处理的产品可以使用 Python、Rust、Go、Java、Node.js 或其他技术栈。
 
 先检查：
 
@@ -90,18 +90,20 @@ npm --prefix auto-workflow test
 
 ### 3. 配置产品的验证命令
 
-编辑刚复制出的 `auto-workflow/config.json`。example 中的命令只演示一个具有 `backend/`、`frontend/` 和根目录 npm scripts 的项目；必须把它们替换成当前产品仓库真实可用的命令。
+编辑刚复制出的 `auto-workflow/config.json`。example 只提供一个名为 `basic` 的最小 profile；应把它替换或扩展为当前产品仓库真实可用的检查。
 
 一个 profile 是“一组按顺序执行的验证命令”。Planner 只选择 profile 名称，Controller 才会从本地配置读取并执行对应命令；任一命令返回非零状态后，该组验证立即失败。
 
-四个 profile 名称是当前计划 schema 的固定接口，用户配置必须全部提供：
+profile 名称由用户定义。只需要配置适合当前项目的类型，不需要凑齐预设分类。例如：
 
-| Profile | 什么时候选用 | 用户应填写什么 |
+| 项目或任务 | 可采用的 Profile | 命令示例 |
 | --- | --- | --- |
-| `backend` | 只改后端 | 后端 lint、类型检查和测试 |
-| `frontend` | 只改前端 | 前端测试、类型检查或构建 |
-| `full` | 跨模块、公共接口或高影响修改 | 产品最有代表性的跨模块门禁 |
-| `docs` | 只改文档 | Markdown 检查或 `git diff --check` |
+| Python | `pytest` | `ruff check .`、`pytest` |
+| Rust | `cargo` | `cargo fmt --check`、`cargo test` |
+| Go | `go-test` | `go test ./...` |
+| 文档 | `docs-only` | `git diff --check`、Markdown lint |
+| 任意项目的快速检查 | `quick` | 项目最快的静态检查或小型测试集 |
+| 发布候选 | `release` | 完整测试、构建或兼容性检查 |
 
 例如，用户可以这样填写自己的 profile：
 
@@ -109,34 +111,20 @@ npm --prefix auto-workflow test
 {
   "verification": {
     "profiles": {
-      "backend": [
-        "npm --prefix backend run lint",
-        "npm --prefix backend run typecheck",
-        "npm --prefix backend test"
-      ],
-      "frontend": [
-        "npm --prefix frontend run lint",
-        "npm --prefix frontend test",
-        "npm --prefix frontend run build"
-      ],
-      "full": [
-        "npm run lint",
-        "npm run build",
-        "npm test"
-      ],
-      "docs": [
+      "quick": [
         "git diff --check"
+      ],
+      "python": [
+        "ruff check .",
+        "pytest"
       ]
     },
     "checkpoint": [
-      "npm run lint",
-      "npm test"
+      "pytest -q"
     ],
     "final": [
-      "npm run lint",
-      "npm run build",
-      "npm test",
-      "git diff --check"
+      "ruff check .",
+      "pytest"
     ]
   }
 }
@@ -144,11 +132,15 @@ npm --prefix auto-workflow test
 
 编写规则：
 
-- 必须保留 `backend`、`frontend`、`full`、`docs` 四个名称，暂不支持增加其他名称；
+- 至少定义一个 profile；名称必须以英文字母开头，之后可以使用字母、数字、`_`、`-`，最长 64 个字符；
 - 每个值必须是非空字符串数组，每条字符串是一条从隔离产品 worktree 根目录执行的 Bash 命令；
 - 命令应无交互、可重复执行，并使用隔离的测试数据库或测试服务；
-- `checkpoint` 是每批任务后的阶段门禁，`final` 是完成前的全量门禁，两者也必须是非空数组；
+- 只定义 Planner 真正可以选择的 profile，名称应表达验证强度或任务类型；
+- `checkpoint` 和 `final` 都是可选数组；省略或设为 `[]` 就不会执行相应的聚合命令；
+- `execution.checkpointEvery` 只在 `checkpoint` 包含命令时生效；
 - 不要把 token、密码或生产连接串写入配置；需要的测试环境变量应由启动进程安全提供。
+
+上面的 Python 命令只是写法示例，不需要为非 Python 项目保留。其他技术栈按同样结构换成自己的命令即可。
 
 `config.json` 不需要也不应提交。启动时，`start.sh` 会把它以 `0600` 权限复制到本次隔离 workflow，并在 run 目录保存配置快照，确保恢复时仍使用同一配置。
 
@@ -230,8 +222,8 @@ node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 
 终态含义：
 
-- `COMPLETE`：所有任务、最终门禁和独立审查都通过；
-- `BLOCKED`：重试耗尽、依赖死锁、最终门禁或审查未通过；
+- `COMPLETE`：所有任务的 profile、已配置的聚合门禁和独立审查都通过；
+- `BLOCKED`：重试耗尽、依赖死锁、已配置的聚合门禁或审查未通过；
 - `BUDGET_EXHAUSTED`：时间或 Codex 调用预算用完，进度已保存，可以 resume。
 
 `status` 还会显示 Controller 是否 `ONLINE`。若任务仍显示 `RUNNING`，但 Controller 为 `OFFLINE`，应先查看 `operator.log` 和 `supervisor.json`，再决定是否 resume。
@@ -271,11 +263,11 @@ git merge --no-ff auto/overnight-<run-id>
 | `execution.maxCodexCalls` | 单次运行的 Codex 调用预算 |
 | `execution.codexTimeoutMinutes` | 单次模型调用超时 |
 | `execution.verificationTimeoutMinutes` | 单次验证门禁超时 |
-| `execution.checkpointEvery` | 每完成多少项运行阶段门禁 |
+| `execution.checkpointEvery` | 配置了 `verification.checkpoint` 时，每完成多少项运行一次 |
 | `execution.maxCheckpointReplans` | 阶段检查发现缺口后最多追加几轮修复任务 |
-| `verification.profiles` | 单项任务可选的固定验证命令 |
-| `verification.checkpoint` | 阶段门禁命令 |
-| `verification.final` | 最终完整门禁命令 |
+| `verification.profiles` | 用户命名的单项任务验证命令；至少一个 |
+| `verification.checkpoint` | 可选的周期性聚合命令；默认空 |
+| `verification.final` | 可选的最终聚合命令；默认空 |
 
 资源隔离可用环境变量临时覆盖：
 
@@ -302,8 +294,7 @@ example 配置使用 `workspace-write`。Planner、阶段检查和最终审查�
 
 ## 当前限制
 
-- `start.sh` 当前固定检查并复用 `backend/node_modules` 与 `frontend/node_modules`；其他目录结构需要修改启动适配器。
-- 四个验证 profile 名称由计划 schema 固定为 `backend`、`frontend`、`full`、`docs`；可以改各自命令，但不能只在 `config.json` 中另起名称。
+- 隔离 worktree 默认只包含产品仓库已跟踪的文件，不会自动复制 `node_modules`、虚拟环境、构建缓存等被忽略内容；验证命令需要使用可用的全局工具、共享缓存，或自行准备所需环境。
 - PostgreSQL 等外部服务需要提前提供隔离的测试环境；workflow 不会连接或准备生产资源。
 - 阶段检查发现缺口时，每轮最多生成 5 个有文件预算的修复任务；超过配置轮数后进入 `BLOCKED`，不会无限扩张任务。
 - 自动恢复只处理 Controller 异常退出；连续失败达到上限后需要人工查看日志。
