@@ -88,6 +88,18 @@ npm --prefix auto-workflow test
 
 仓库只提供可复制的 `config.json.example`，不提供会直接生效的默认 `config.json`。你创建的 `config.json` 已被 workflow 自己的 `.gitignore` 忽略，不会意外提交到公共仓库。
 
+### 更新已安装的 workflow
+
+在产品仓库根目录执行：
+
+```bash
+git -C auto-workflow switch main
+git -C auto-workflow pull --ff-only origin main
+npm --prefix auto-workflow test
+```
+
+更新不会覆盖被 Git 忽略的本地 `auto-workflow/config.json`。已经启动的 run 使用启动时固定的 workflow commit 和配置快照，不会在运行中改变；更新只影响之后新建的 run。
+
 ### 3. 配置产品的验证命令
 
 编辑刚复制出的 `auto-workflow/config.json`。example 只提供一个名为 `basic` 的最小 profile；应把它替换或扩展为当前产品仓库真实可用的检查。
@@ -202,7 +214,7 @@ node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 | 停止本次运行 | `tmux send-keys -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)" C-c` |
 | 继续原运行 | `./auto-workflow/resume.sh auto-workflow/.runs/<run-id>` |
 | 追加继续预算 | `./auto-workflow/resume.sh auto-workflow/.runs/<run-id> --max-hours 12 --max-codex-calls 100` |
-| 更新 workflow | `git -C auto-workflow pull --ff-only` |
+| 更新 workflow | 运行“更新已安装的 workflow”中的三条命令 |
 
 `resume` 必须在原来的隔离 worktree 和原分支中执行。不要删除 run 目录，也不要在该 worktree 中混入手工修改；失败尝试留下的未提交内容会作为下一次修复的上下文。
 
