@@ -45,7 +45,7 @@ git clone git@github.com:singledog957/codex_auto_workflow.git auto-workflow
 
 ```bash
 npm --prefix auto-workflow test
-node auto-workflow/runner.mjs run doc/addr/20260815_redesign/implement.md --dry-run
+node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 ```
 
 `--dry-run` 不调用 Codex，也不修改源码，只在 `auto-workflow/.runs/` 生成配置和任务预览。
@@ -53,7 +53,7 @@ node auto-workflow/runner.mjs run doc/addr/20260815_redesign/implement.md --dry-
 ## 一条命令开始夜间任务
 
 ```bash
-./auto-workflow/start.sh doc/addr/20260815_redesign/implement.md
+./auto-workflow/start.sh doc/implementation.md
 ```
 
 默认行为：
@@ -68,7 +68,7 @@ node auto-workflow/runner.mjs run doc/addr/20260815_redesign/implement.md --dry-
 希望在终端前台观察时：
 
 ```bash
-./auto-workflow/start.sh doc/addr/20260815_redesign/implement.md --foreground
+./auto-workflow/start.sh doc/implementation.md --foreground
 ```
 
 ## 早上查看
