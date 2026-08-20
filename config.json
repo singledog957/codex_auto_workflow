@@ -38,8 +38,8 @@
     }
   },
   "execution": {
-    "sandbox": "danger-full-access",
-    "allowDangerFullAccess": true,
+    "sandbox": "workspace-write",
+    "allowDangerFullAccess": false,
     "maxHours": 12,
     "maxCodexCalls": 100,
     "codexTimeoutMinutes": 90,

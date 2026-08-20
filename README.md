@@ -1,4 +1,4 @@
-# 无人值守开发工作流
+# Codex 无人值守开发工作流
 
 这套脚本把一个实施文档转换为可恢复的任务队列，并用不同价位的 Codex 模型逐项完成。它没有图形界面，不会自动 push、merge、部署、访问生产数据或删除 worktree。
 
@@ -26,8 +26,20 @@ Phase checkpoint 是只读验收任务，不再复用可写 implementation worke
 
 - 已安装并登录 Codex CLI：`codex --version`、`codex login status`。
 - Node.js 24、tmux、systemd user service、项目依赖和测试环境已经就绪。
-- 先把本目录提交到 Git；`start.sh` 只从干净的提交创建隔离 worktree。
+- 产品仓库和本 workflow 仓库都必须处于干净、已提交状态。
 - 电脑整夜保持通电，并关闭自动睡眠。锁屏没有问题，系统挂起会停止进程。
+
+在产品仓库根目录安装。workflow 作为被父仓库忽略的独立 Git checkout 维护：
+
+```bash
+printf '\nauto-workflow/\n' >> .gitignore
+git add .gitignore
+git commit -m "chore: ignore standalone auto-workflow"
+git clone git@github.com:singledog957/codex_auto_workflow.git auto-workflow
+```
+
+更新 workflow 时运行 `git -C auto-workflow pull --ff-only`。`start.sh` 会把当前 workflow commit 克隆到每个
+隔离的产品 worktree；因此运行期间的代码和 `.runs/` 状态不会依赖主工作区中的嵌套 checkout。
 
 先验证脚本本身：
 
@@ -48,6 +60,7 @@ node auto-workflow/runner.mjs run doc/addr/20260815_redesign/implement.md --dry-
 
 - 从当前 `HEAD` 创建 `auto/overnight-<时间>` 分支；
 - 在仓库同级目录创建独立 worktree；
+- 把当前 auto-workflow commit 克隆到新 worktree，保持执行器与该次运行的状态自包含；
 - 复用主工作区已经安装的前后端 `node_modules`（只创建被 Git 忽略的符号链接）；
 - 在命名的 tmux session 中后台启动 supervisor，然后立即返回；SSH 断开不会终止任务；
 - 打印 worktree、tmux session、日志和状态命令。
@@ -137,7 +150,10 @@ Node、PostgreSQL 等孙进程；service 的 `KillMode=control-group` 能在正�
 调用环境通过 service stdin 传入，不会作为 systemd 命令参数或持久文件暴露；因此 PATH、代理和临时测试变量与启动
 `start.sh`/`resume.sh` 时保持一致。
 
-当前仓库配置显式启用了 `danger-full-access`，因为这台 VM 的 Codex `read-only`/`workspace-write` 沙箱执行 shell 时会报 `bwrap: loopback: Failed RTM_NEWADDR`。它必须同时设置 `allowDangerFullAccess: true`，避免无意中开启。runner 仍使用隔离 worktree、固定验证命令、禁止审批和 git 不变量检查，但模型生成的 shell 命令不再受 OS 沙箱限制；只应在一次性或可信开发机上运行。换到支持 Codex 沙箱的机器后，应恢复 `workspace-write` 并删除该确认开关。
+公开配置默认使用 `workspace-write`。如果某台一次性或可信开发机确实无法运行 Codex 沙箱，可把
+`execution.sandbox` 改为 `danger-full-access`，并同时显式设置 `allowDangerFullAccess: true`。runner 仍会使用
+隔离 worktree、固定验证命令、禁止审批和 Git 不变量检查，但这种模式下模型生成的命令不再受 OS 沙箱限制。
+不要在包含生产凭据、生产数据或其他高价值资产的机器上启用该逃生开关。
 
 默认聚合门禁使用 `npm run lint`/`npm run build`，避免后台非登录 shell 找不到由 Corepack 提供的 `pnpm`；它们仍然调用仓库根 `package.json` 中相同的前后端脚本。
 
@@ -147,5 +163,6 @@ Node、PostgreSQL 等孙进程；service 的 `KillMode=control-group` 能在正�
 - 一个大型实施文档不保证一夜完成；预算耗尽后按原状态继续。
 - 最终审查拒绝时，第一版会报告 blockers，不会擅自修改验收标准或无限循环。
 - PostgreSQL 专项测试需要你预先提供隔离的测试数据库配置；默认门禁使用仓库的 SQLite 测试入口。
+- `config.json` 中的前后端验证命令是示例项目配置；在其他仓库使用前必须改成该仓库真实且固定的门禁。
 - 自动恢复只处理 controller 异常退出；连续三次恢复后仍是 `RUNNING` 会停止并在 `supervisor.json` 中要求人工诊断，
   以避免永久重启循环。
