@@ -91,6 +91,21 @@ test('requires a truthful plan outcome and rejects dependency cycles', () => {
   }), /dependency cycle/i)
 })
 
+test('accepts a twenty-file task budget and rejects larger tasks', () => {
+  const boundedTask = { ...plan.tasks[0], maxFiles: 20 }
+
+  assert.doesNotThrow(() => validatePlan({
+    outcome: 'work_remaining',
+    summary: 'larger bounded repair',
+    tasks: [boundedTask],
+  }))
+  assert.throws(() => validatePlan({
+    outcome: 'work_remaining',
+    summary: 'oversized repair',
+    tasks: [{ ...boundedTask, maxFiles: 21 }],
+  }), /1 to 20/i)
+})
+
 test('recognizes a legacy zero-task false success as retryable planning', () => {
   const state = createRunState({
     sourceDocument: 'doc/plan.md',

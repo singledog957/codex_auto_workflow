@@ -4,7 +4,7 @@
 
 ## 它如何工作
 
-1. `gpt-5.6-sol/high` 只读检查实施文档和现有代码，生成小型、带依赖的 JSON 任务；每项显式区分为 `implementation` 或 `checkpoint`，并带有 1–5 个文件的硬预算。
+1. `gpt-5.6-sol/high` 只读检查实施文档和现有代码，生成小型、带依赖的 JSON 任务；每项显式区分为 `implementation` 或 `checkpoint`，并带有 1–20 个文件的硬预算。规划器仍优先把普通任务控制在 5 个文件内，只在不可安全拆分的内聚修复中使用更高上限。
 2. 普通任务依次使用 Luna、Luna、Terra、Sol；迁移、并发、授权、secret、公共契约等高风险任务直接使用 Sol，最多两次。
 3. Agent 只能选择 `backend`、`frontend`、`full`、`docs` 验证档位，不能生成要执行的测试命令。真实命令固定在 `config.json`。
 4. Controller 亲自运行验证并检查退出码。验证通过才创建 Git checkpoint；失败则把真实日志交给下一次尝试。
