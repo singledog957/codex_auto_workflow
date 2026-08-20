@@ -45,6 +45,7 @@
     "codexTimeoutMinutes": 90,
     "verificationTimeoutMinutes": 30,
     "checkpointEvery": 3,
+    "maxCheckpointReplans": 2,
     "requireCleanTree": true,
     "autoCommit": true
   },

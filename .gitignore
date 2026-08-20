@@ -1,4 +1,6 @@
 .runs/
+.worktrees/
+/config.json
 node_modules/
 .env
 .env.*

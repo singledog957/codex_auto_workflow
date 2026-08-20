@@ -39,7 +39,12 @@ async function createRepository(t, prefix, { dangerFullAccess = false, fakeCodex
       checkpointEvery: 99,
     },
     verification: {
-      profiles: { docs: ["node -e \"process.exit(0)\""] },
+      profiles: {
+        backend: ["node -e \"process.exit(0)\""],
+        frontend: ["node -e \"process.exit(0)\""],
+        full: ["node -e \"process.exit(0)\""],
+        docs: ["node -e \"process.exit(0)\""],
+      },
       checkpoint: ["node -e \"process.exit(0)\""],
       final: ["node -e \"process.exit(0)\""],
     },

@@ -44,6 +44,8 @@ test('starts a detached workflow in a named tmux session', async (t) => {
   await copyFile(startScript, join(repo, 'auto-workflow/start.sh'))
   await chmod(join(repo, 'auto-workflow/start.sh'), 0o755)
   await writeFile(join(repo, 'auto-workflow/supervisor.mjs'), '')
+  await writeFile(join(repo, 'auto-workflow/.gitignore'), 'config.json\n')
+  await writeFile(join(repo, 'auto-workflow/config.json'), '{"verification":{"profiles":{"docs":["custom docs gate"]}}}\n')
   await writeFile(join(repo, '.gitignore'), 'auto-workflow/\nnode_modules/\nfake-bin/\n')
   await writeFile(join(repo, 'backend/.gitkeep'), '')
   await writeFile(join(repo, 'frontend/.gitkeep'), '')
@@ -77,6 +79,7 @@ printf '%s\\n' "$@" > "$TMUX_CAPTURE"
   worktreePath = worktreeMatch[1]
 
   const runId = runDataMatch[1].split('/').at(-1)
+  assert.equal(worktreePath, join(repo, 'auto-workflow/.worktrees', runId))
   const sessionName = `auto-workflow-${runId}`
   const tmuxArgs = (await readFile(capture, 'utf8')).trim().split('\n')
   assert.deepEqual(tmuxArgs.slice(0, 6), [
@@ -113,7 +116,8 @@ test('clones the standalone workflow into the isolated product worktree', async 
   await copyFile(startScript, join(workflow, 'start.sh'))
   await chmod(join(workflow, 'start.sh'), 0o755)
   await writeFile(join(workflow, 'supervisor.mjs'), '')
-  await writeFile(join(workflow, '.gitignore'), '.runs/\n')
+  await writeFile(join(workflow, '.gitignore'), '.runs/\nconfig.json\n')
+  await writeFile(join(workflow, 'config.json'), '{"verification":{"profiles":{"docs":["custom docs gate"]}}}\n')
   await executable(join(bin, 'codex'), '#!/usr/bin/env bash\nexit 0\n')
   await executable(join(bin, 'node'), '#!/usr/bin/env bash\nexit 0\n')
   await executable(join(bin, 'tmux'), '#!/usr/bin/env bash\nexit 0\n')
@@ -141,9 +145,34 @@ test('clones the standalone workflow into the isolated product worktree', async 
   const worktreeMatch = result.stdout.match(/^Worktree:\s+(.+)$/m)
   assert.ok(worktreeMatch, result.stdout)
   worktreePath = worktreeMatch[1]
+  assert.equal(dirname(worktreePath), join(workflow, '.worktrees'))
   assert.equal(
     (await run('git', ['rev-parse', '--show-toplevel'], { cwd: join(worktreePath, 'auto-workflow') })).code,
     0,
   )
   assert.equal(await readFile(join(worktreePath, 'auto-workflow/supervisor.mjs'), 'utf8'), '')
+  assert.equal(
+    await readFile(join(worktreePath, 'auto-workflow/config.json'), 'utf8'),
+    '{"verification":{"profiles":{"docs":["custom docs gate"]}}}\n',
+  )
+})
+
+test('explains how to create the required user config when it is missing', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'auto-workflow-missing-config-'))
+  const workflow = join(directory, 'workflow')
+  t.after(() => rm(directory, { recursive: true, force: true }))
+
+  await mkdir(workflow, { recursive: true })
+  await copyFile(startScript, join(workflow, 'start.sh'))
+  await chmod(join(workflow, 'start.sh'), 0o755)
+  await writeFile(join(workflow, '.gitignore'), 'config.json\n')
+  await run('git', ['init', '-q'], { cwd: workflow })
+  await run('git', ['add', '.'], { cwd: workflow })
+  await run('git', ['commit', '-qm', 'initial workflow'], { cwd: workflow })
+
+  const result = await run('/bin/bash', [join(workflow, 'start.sh'), 'doc.md'], { cwd: directory })
+
+  assert.equal(result.code, 66)
+  assert.match(result.stderr, /config\.json is required/i)
+  assert.match(result.stderr, /cp config\.json\.example config\.json/)
 })

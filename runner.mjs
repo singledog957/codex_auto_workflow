@@ -4,7 +4,13 @@ import { access, mkdir, readFile, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 
-import { inspectionSandbox, modelForTaskAttempt, resolveConfig, verificationCommands } from './lib/config.mjs'
+import {
+  inspectionSandbox,
+  modelForTaskAttempt,
+  resolveConfig,
+  resolveUserConfig,
+  verificationCommands,
+} from './lib/config.mjs'
 import { runCodex } from './lib/codex.mjs'
 import { readJson, writeJsonAtomic, writeText } from './lib/files.mjs'
 import {
@@ -110,7 +116,7 @@ function timestampId() {
 
 async function loadConfig(path) {
   const raw = await readJson(path)
-  return resolveConfig(raw)
+  return resolveUserConfig(raw)
 }
 
 async function saveState(runDir, state) {

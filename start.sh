@@ -30,6 +30,14 @@ if [[ -n $(git -C "$workflow_root" status --porcelain=v1) ]]; then
   echo "The auto-workflow repository must be clean before starting a run." >&2
   exit 65
 fi
+workflow_config="$workflow_root/config.json"
+if [[ ! -f $workflow_config || ! -r $workflow_config ]]; then
+  echo "auto-workflow config.json is required but was not found or is not readable." >&2
+  echo "Create it in the workflow checkout:" >&2
+  echo "  cd '$workflow_root'" >&2
+  echo "  cp config.json.example config.json" >&2
+  exit 66
+fi
 workflow_head=$(git -C "$workflow_root" rev-parse HEAD)
 
 repo_root=$(git rev-parse --show-toplevel)
@@ -76,14 +84,16 @@ for dependency_directory in backend/node_modules frontend/node_modules; do
 done
 
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
-repo_name=$(basename "$repo_root")
-worktree_path="$(dirname "$repo_root")/${repo_name}-auto-${run_id}"
+worktree_root="$workflow_root/.worktrees"
+worktree_path="$worktree_root/$run_id"
 branch_name="auto/overnight-${run_id}"
 run_directory="auto-workflow/.runs/${run_id}"
 
+mkdir -p "$worktree_root"
 git worktree add -b "$branch_name" "$worktree_path" HEAD
 git clone --local --no-hardlinks --quiet "$workflow_root" "$worktree_path/auto-workflow"
 git -C "$worktree_path/auto-workflow" checkout --quiet --detach "$workflow_head"
+install -m 600 "$workflow_config" "$worktree_path/auto-workflow/config.json"
 mkdir -p "$worktree_path/$run_directory"
 ln -s "$repo_root/backend/node_modules" "$worktree_path/backend/node_modules"
 ln -s "$repo_root/frontend/node_modules" "$worktree_path/frontend/node_modules"

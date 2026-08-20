@@ -36,7 +36,12 @@ test('completes planner, worker, fixed gates, commit, and final review with a fa
       checkpointEvery: 1,
     },
     verification: {
-      profiles: { docs: ["node -e \"process.exit(0)\""] },
+      profiles: {
+        backend: ["node -e \"process.exit(0)\""],
+        frontend: ["node -e \"process.exit(0)\""],
+        full: ["node -e \"process.exit(0)\""],
+        docs: ["node -e \"process.exit(0)\""],
+      },
       checkpoint: ["node -e \"process.exit(0)\""],
       final: ["node -e \"process.exit(0)\""],
     },
@@ -222,7 +227,12 @@ test('checkpoint reviews are read-only and schedule bounded repair tasks instead
       maxCheckpointReplans: 2,
     },
     verification: {
-      profiles: { docs: ["node -e \"process.exit(0)\""] },
+      profiles: {
+        backend: ["node -e \"process.exit(0)\""],
+        frontend: ["node -e \"process.exit(0)\""],
+        full: ["node -e \"process.exit(0)\""],
+        docs: ["node -e \"process.exit(0)\""],
+      },
       checkpoint: ["node -e \"process.exit(0)\""],
       final: ["node -e \"process.exit(0)\""],
     },
@@ -301,7 +311,18 @@ test('dry-run preview emits the same task controls required from the real planne
   t.after(() => rm(repo, { recursive: true, force: true }))
   await mkdir(join(repo, 'auto-workflow'))
   await writeFile(join(repo, 'doc.md'), '#### I-01: Small change\n')
-  await writeFile(join(repo, 'config.json'), '{}\n')
+  await writeFile(join(repo, 'config.json'), JSON.stringify({
+    verification: {
+      profiles: {
+        backend: ['backend gate'],
+        frontend: ['frontend gate'],
+        full: ['full gate'],
+        docs: ['docs gate'],
+      },
+      checkpoint: ['checkpoint gate'],
+      final: ['final gate'],
+    },
+  }))
   await run('git', ['init', '-q'], { cwd: repo })
   await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: repo })
   await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: repo })

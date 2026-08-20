@@ -6,6 +6,7 @@ import {
   modelForAttempt,
   modelForTaskAttempt,
   resolveConfig,
+  resolveUserConfig,
   verificationCommands,
 } from '../lib/config.mjs'
 
@@ -59,4 +60,39 @@ test('allows an explicit VM compatibility escape hatch and applies it to inspect
   assert.equal(config.execution.sandbox, 'danger-full-access')
   assert.equal(inspectionSandbox(config), 'danger-full-access')
   assert.equal(inspectionSandbox(resolveConfig({})), 'read-only')
+})
+
+test('requires users to define every planner-visible verification profile', () => {
+  const verification = {
+    profiles: {
+      backend: ['backend gate'],
+      frontend: ['frontend gate'],
+      full: ['full gate'],
+      docs: ['docs gate'],
+    },
+    checkpoint: ['checkpoint gate'],
+    final: ['final gate'],
+  }
+
+  assert.deepEqual(resolveUserConfig({ verification }).verification, verification)
+  assert.throws(
+    () => resolveUserConfig({ verification: { ...verification, profiles: { docs: ['docs gate'] } } }),
+    /backend.*frontend.*full/i,
+  )
+  assert.throws(
+    () => resolveUserConfig({
+      verification: { ...verification, profiles: { ...verification.profiles, custom: ['custom gate'] } },
+    }),
+    /unsupported.*custom/i,
+  )
+  assert.throws(
+    () => resolveUserConfig({
+      verification: { ...verification, profiles: { ...verification.profiles, docs: ['  '] } },
+    }),
+    /profile docs.*commands/i,
+  )
+  assert.throws(
+    () => resolveUserConfig({ verification: { ...verification, final: [''] } }),
+    /verification\.final.*commands/i,
+  )
 })

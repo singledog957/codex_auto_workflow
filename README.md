@@ -8,7 +8,7 @@
 
 - **自动拆解**：Planner 阅读实施文档和现有代码，生成有依赖关系、文件数量上限和验收条件的任务队列。
 - **分级执行**：普通任务按 Luna → Luna → Terra → Sol 逐级重试；迁移、并发、鉴权、secret、公共契约等高风险任务直接使用 Sol。
-- **确定性验收**：Codex 只能选择 `backend`、`frontend`、`full`、`docs` 四种验证档位；真正执行的命令由版本库中的 `config.json` 固定，模型不能临时拼测试命令。
+- **确定性验收**：Codex 只能选择 `backend`、`frontend`、`full`、`docs` 四种验证档位；真正执行的命令由用户本地的 `config.json` 固定，模型不能临时拼测试命令。
 - **通过才提交**：Controller 检查命令退出码，验证通过后才创建 Git checkpoint commit；失败日志会成为下一次修复的上下文。
 - **阶段与最终审查**：默认每完成 3 项运行一次阶段门禁，最后再运行完整门禁和独立审查。
 - **可恢复运行**：计划、状态、测试证据和日志持续写入 `.runs/<run-id>/`，断电或预算耗尽后可继续。
@@ -80,30 +80,77 @@ printf '\nauto-workflow/\n' >> .gitignore
 git add .gitignore
 git commit -m "chore: ignore standalone auto-workflow"
 git clone git@github.com:singledog957/codex_auto_workflow.git auto-workflow
+cp auto-workflow/config.json.example auto-workflow/config.json
 npm --prefix auto-workflow test
 ```
 
 `auto-workflow/` 是被产品仓库忽略的独立 Git checkout，不是产品仓库的一部分。这样 workflow 可以独立升级，也不会把运行状态混入产品提交。
 
+仓库只提供可复制的 `config.json.example`，不提供会直接生效的默认 `config.json`。你创建的 `config.json` 已被 workflow 自己的 `.gitignore` 忽略，不会意外提交到公共仓库。
+
 ### 3. 配置产品的验证命令
 
-先编辑 `auto-workflow/config.json`。仓库自带的命令假定项目具有 `backend/`、`frontend/` 和根目录 npm scripts；如果你的项目不同，必须把验证命令改成该项目真实可用的命令。
+编辑刚复制出的 `auto-workflow/config.json`。example 中的命令只演示一个具有 `backend/`、`frontend/` 和根目录 npm scripts 的项目；必须把它们替换成当前产品仓库真实可用的命令。
 
-四个 profile 名称目前是固定接口：
+一个 profile 是“一组按顺序执行的验证命令”。Planner 只选择 profile 名称，Controller 才会从本地配置读取并执行对应命令；任一命令返回非零状态后，该组验证立即失败。
 
-| Profile | 用途 | 默认命令示例 |
+四个 profile 名称是当前计划 schema 的固定接口，用户配置必须全部提供：
+
+| Profile | 什么时候选用 | 用户应填写什么 |
 | --- | --- | --- |
-| `backend` | 后端任务 | typecheck、后端测试 |
-| `frontend` | 前端任务 | 前端测试、构建 |
-| `full` | 跨前后端任务 | 后端检查与前端测试 |
-| `docs` | 纯文档任务 | `git diff --check` |
+| `backend` | 只改后端 | 后端 lint、类型检查和测试 |
+| `frontend` | 只改前端 | 前端测试、类型检查或构建 |
+| `full` | 跨模块、公共接口或高影响修改 | 产品最有代表性的跨模块门禁 |
+| `docs` | 只改文档 | Markdown 检查或 `git diff --check` |
 
-修改后要提交到 workflow 自己的仓库，因为启动器拒绝从脏的 workflow checkout 开始：
+例如，用户可以这样填写自己的 profile：
 
-```bash
-git -C auto-workflow add config.json
-git -C auto-workflow commit -m "chore: configure project verification"
+```json
+{
+  "verification": {
+    "profiles": {
+      "backend": [
+        "npm --prefix backend run lint",
+        "npm --prefix backend run typecheck",
+        "npm --prefix backend test"
+      ],
+      "frontend": [
+        "npm --prefix frontend run lint",
+        "npm --prefix frontend test",
+        "npm --prefix frontend run build"
+      ],
+      "full": [
+        "npm run lint",
+        "npm run build",
+        "npm test"
+      ],
+      "docs": [
+        "git diff --check"
+      ]
+    },
+    "checkpoint": [
+      "npm run lint",
+      "npm test"
+    ],
+    "final": [
+      "npm run lint",
+      "npm run build",
+      "npm test",
+      "git diff --check"
+    ]
+  }
+}
 ```
+
+编写规则：
+
+- 必须保留 `backend`、`frontend`、`full`、`docs` 四个名称，暂不支持增加其他名称；
+- 每个值必须是非空字符串数组，每条字符串是一条从隔离产品 worktree 根目录执行的 Bash 命令；
+- 命令应无交互、可重复执行，并使用隔离的测试数据库或测试服务；
+- `checkpoint` 是每批任务后的阶段门禁，`final` 是完成前的全量门禁，两者也必须是非空数组；
+- 不要把 token、密码或生产连接串写入配置；需要的测试环境变量应由启动进程安全提供。
+
+`config.json` 不需要也不应提交。启动时，`start.sh` 会把它以 `0600` 权限复制到本次隔离 workflow，并在 run 目录保存配置快照，确保恢复时仍使用同一配置。
 
 ### 4. 写实施文档
 
@@ -141,7 +188,7 @@ node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 `start.sh` 会立即打印：
 
 - 新分支：`auto/overnight-<UTC 时间>`；
-- 产品仓库同级目录中的隔离 worktree；
+- `auto-workflow/.worktrees/<run-id>/` 中的隔离产品 worktree；
 - 固定到当前 workflow commit 的独立 workflow clone；
 - tmux session、运行目录、日志和状态查询命令。
 
@@ -212,7 +259,7 @@ git merge --no-ff auto/overnight-<run-id>
 
 ## 配置参考
 
-主要设置都在 `config.json`：
+主要设置都在用户本地的 `config.json`；完整结构见 `config.json.example`：
 
 | 配置 | 作用 |
 | --- | --- |
@@ -238,7 +285,7 @@ git merge --no-ff auto/overnight-<run-id>
 
 ## 安全边界
 
-公开配置默认使用 `workspace-write`。Planner、阶段检查和最终审查在可行时使用只读检查；每次任务还受独立 worktree、文件数量预算、结构化输出 schema、固定验证命令和 Git 状态检查约束。
+example 配置使用 `workspace-write`。Planner、阶段检查和最终审查在可行时使用只读检查；每次任务还受独立 worktree、文件数量预算、结构化输出 schema、固定验证命令和 Git 状态检查约束。
 
 只有在可信的一次性环境确实无法使用沙箱时，才同时设置：
 
