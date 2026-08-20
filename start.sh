@@ -19,6 +19,19 @@ elif [[ $# -gt 1 ]]; then
   exit 64
 fi
 
+script_dir=$(dirname "${BASH_SOURCE[0]}")
+workflow_root=$(cd "$script_dir" && git rev-parse --show-toplevel)
+script_dir=$(cd "$script_dir" && pwd)
+if [[ $workflow_root != "$script_dir" ]]; then
+  echo "auto-workflow must be a standalone Git checkout: $script_dir" >&2
+  exit 65
+fi
+if [[ -n $(git -C "$workflow_root" status --porcelain=v1) ]]; then
+  echo "The auto-workflow repository must be clean before starting a run." >&2
+  exit 65
+fi
+workflow_head=$(git -C "$workflow_root" rev-parse HEAD)
+
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
@@ -35,6 +48,10 @@ fi
 if [[ -n $(git status --porcelain=v1) ]]; then
   echo "The repository must be clean before creating an automation worktree." >&2
   echo "Commit the auto-workflow setup and any intended source changes first." >&2
+  exit 65
+fi
+if ! git check-ignore --no-index --quiet auto-workflow/; then
+  echo "The product repository must ignore auto-workflow/." >&2
   exit 65
 fi
 
@@ -65,6 +82,8 @@ branch_name="auto/overnight-${run_id}"
 run_directory="auto-workflow/.runs/${run_id}"
 
 git worktree add -b "$branch_name" "$worktree_path" HEAD
+git clone --local --no-hardlinks --quiet "$workflow_root" "$worktree_path/auto-workflow"
+git -C "$worktree_path/auto-workflow" checkout --quiet --detach "$workflow_head"
 mkdir -p "$worktree_path/$run_directory"
 ln -s "$repo_root/backend/node_modules" "$worktree_path/backend/node_modules"
 ln -s "$repo_root/frontend/node_modules" "$worktree_path/frontend/node_modules"

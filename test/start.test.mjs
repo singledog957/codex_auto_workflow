@@ -44,7 +44,7 @@ test('starts a detached workflow in a named tmux session', async (t) => {
   await copyFile(startScript, join(repo, 'auto-workflow/start.sh'))
   await chmod(join(repo, 'auto-workflow/start.sh'), 0o755)
   await writeFile(join(repo, 'auto-workflow/supervisor.mjs'), '')
-  await writeFile(join(repo, '.gitignore'), 'node_modules/\nfake-bin/\n')
+  await writeFile(join(repo, '.gitignore'), 'auto-workflow/\nnode_modules/\nfake-bin/\n')
   await writeFile(join(repo, 'backend/.gitkeep'), '')
   await writeFile(join(repo, 'frontend/.gitkeep'), '')
   await writeFile(join(repo, 'doc.md'), '# Test workflow\n')
@@ -54,9 +54,13 @@ test('starts a detached workflow in a named tmux session', async (t) => {
 printf '%s\\n' "$@" > "$TMUX_CAPTURE"
 `)
 
-  await run('git', ['init', '-q'], { cwd: repo })
-  await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: repo })
-  await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: repo })
+  for (const gitRoot of [repo, join(repo, 'auto-workflow')]) {
+    await run('git', ['init', '-q'], { cwd: gitRoot })
+    await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: gitRoot })
+    await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: gitRoot })
+  }
+  await run('git', ['add', '.'], { cwd: join(repo, 'auto-workflow') })
+  await run('git', ['commit', '-qm', 'initial workflow'], { cwd: join(repo, 'auto-workflow') })
   await run('git', ['add', '.'], { cwd: repo })
   await run('git', ['commit', '-qm', 'initial'], { cwd: repo })
 
@@ -87,4 +91,59 @@ printf '%s\\n' "$@" > "$TMUX_CAPTURE"
   assert.match(tmuxArgs[6], /operator\.log/)
   assert.equal(await readFile(join(runDataMatch[1], 'tmux-session'), 'utf8'), `${sessionName}\n`)
   assert.match(result.stdout, new RegExp(`tmux attach-session -t '${sessionName}'`))
+})
+
+test('clones the standalone workflow into the isolated product worktree', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'standalone-auto-workflow-start-'))
+  const repo = join(directory, 'product')
+  const workflow = join(directory, 'workflow')
+  const bin = join(directory, 'fake-bin')
+  let worktreePath = null
+
+  t.after(async () => {
+    if (worktreePath) await run('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repo })
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  await mkdir(repo, { recursive: true })
+  await mkdir(workflow)
+  await mkdir(join(repo, 'backend/node_modules'), { recursive: true })
+  await mkdir(join(repo, 'frontend/node_modules'), { recursive: true })
+  await mkdir(bin)
+  await copyFile(startScript, join(workflow, 'start.sh'))
+  await chmod(join(workflow, 'start.sh'), 0o755)
+  await writeFile(join(workflow, 'supervisor.mjs'), '')
+  await writeFile(join(workflow, '.gitignore'), '.runs/\n')
+  await executable(join(bin, 'codex'), '#!/usr/bin/env bash\nexit 0\n')
+  await executable(join(bin, 'node'), '#!/usr/bin/env bash\nexit 0\n')
+  await executable(join(bin, 'tmux'), '#!/usr/bin/env bash\nexit 0\n')
+
+  for (const gitRoot of [repo, workflow]) {
+    await run('git', ['init', '-q'], { cwd: gitRoot })
+    await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: gitRoot })
+    await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: gitRoot })
+  }
+  await writeFile(join(repo, '.gitignore'), 'auto-workflow/\nnode_modules/\n')
+  await writeFile(join(repo, 'backend/.gitkeep'), '')
+  await writeFile(join(repo, 'frontend/.gitkeep'), '')
+  await writeFile(join(repo, 'doc.md'), '# Test workflow\n')
+  await run('git', ['add', '.'], { cwd: repo })
+  await run('git', ['commit', '-qm', 'initial product'], { cwd: repo })
+  await run('git', ['add', '.'], { cwd: workflow })
+  await run('git', ['commit', '-qm', 'initial workflow'], { cwd: workflow })
+
+  const result = await run('/bin/bash', [join(workflow, 'start.sh'), 'doc.md'], {
+    cwd: repo,
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  })
+
+  assert.equal(result.code, 0, result.stderr || result.stdout)
+  const worktreeMatch = result.stdout.match(/^Worktree:\s+(.+)$/m)
+  assert.ok(worktreeMatch, result.stdout)
+  worktreePath = worktreeMatch[1]
+  assert.equal(
+    (await run('git', ['rev-parse', '--show-toplevel'], { cwd: join(worktreePath, 'auto-workflow') })).code,
+    0,
+  )
+  assert.equal(await readFile(join(worktreePath, 'auto-workflow/supervisor.mjs'), 'utf8'), '')
 })
