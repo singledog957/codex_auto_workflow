@@ -1,168 +1,263 @@
-# Codex 无人值守开发工作流
+# Codex Auto Workflow
 
-这套脚本把一个实施文档转换为可恢复的任务队列，并用不同价位的 Codex 模型逐项完成。它没有图形界面，不会自动 push、merge、部署、访问生产数据或删除 worktree。
+把一份实施文档交给 Codex，让它在隔离的 Git worktree 中自动规划、逐项实现、运行固定测试、提交通过的任务，并在中断后从原进度继续。
 
-## 它如何工作
+它适合“需求已经写清楚、仓库已有可靠测试、希望长时间无人值守执行”的开发任务。它不是部署系统：不会自动 push、合并、发布、访问生产数据或删除 worktree。
 
-1. `gpt-5.6-sol/high` 只读检查实施文档和现有代码，生成小型、带依赖的 JSON 任务；每项显式区分为 `implementation` 或 `checkpoint`，并带有 1–20 个文件的硬预算。规划器仍优先把普通任务控制在 5 个文件内，只在不可安全拆分的内聚修复中使用更高上限。
-2. 普通任务依次使用 Luna、Luna、Terra、Sol；迁移、并发、授权、secret、公共契约等高风险任务直接使用 Sol，最多两次。
-3. Agent 只能选择 `backend`、`frontend`、`full`、`docs` 验证档位，不能生成要执行的测试命令。真实命令固定在 `config.json`。
-4. Controller 亲自运行验证并检查退出码。验证通过才创建 Git checkpoint；失败则把真实日志交给下一次尝试。
-5. 每三项运行一次 checkpoint 门禁；全部任务结束后运行完整门禁和独立 Sol 审查。
-6. 每一步保存到 `.runs/<run-id>/state.json`，中断后可以继续。
-7. tmux 中的轻量 supervisor 把每次 controller 执行放进独立的 systemd user service cgroup。该 cgroup
-   默认最多使用主机 60% 的内存，controller 退出时会清理它启动的全部子孙进程；OOM 或异常退出且持久状态仍为
-   `RUNNING` 时，supervisor 最多自动恢复三次。
+## 它提供什么
 
-Phase checkpoint 是只读验收任务，不再复用可写 implementation worker。它只检查验收条件和 controller
-证据：通过则记录完成；发现实质缺口则生成最多五个独立、带文件预算的修复任务，把这些任务插入 checkpoint
-之前，修复完成后再验收。默认最多允许两轮这种重排，仍有缺口就进入 `BLOCKED`，避免在一个 checkpoint
-里持续扩张。即使 VM 配置使用 `danger-full-access`，controller 也会比较审查前后的 Git 工作树；checkpoint
-发生任何写入都会阻塞且不会提交。
+- **自动拆解**：Planner 阅读实施文档和现有代码，生成有依赖关系、文件数量上限和验收条件的任务队列。
+- **分级执行**：普通任务按 Luna → Luna → Terra → Sol 逐级重试；迁移、并发、鉴权、secret、公共契约等高风险任务直接使用 Sol。
+- **确定性验收**：Codex 只能选择 `backend`、`frontend`、`full`、`docs` 四种验证档位；真正执行的命令由版本库中的 `config.json` 固定，模型不能临时拼测试命令。
+- **通过才提交**：Controller 检查命令退出码，验证通过后才创建 Git checkpoint commit；失败日志会成为下一次修复的上下文。
+- **阶段与最终审查**：默认每完成 3 项运行一次阶段门禁，最后再运行完整门禁和独立审查。
+- **可恢复运行**：计划、状态、测试证据和日志持续写入 `.runs/<run-id>/`，断电或预算耗尽后可继续。
+- **进程隔离**：每次执行位于独立产品 worktree；后台 supervisor 使用 tmux 和 systemd cgroup 管理整个进程树，默认内存上限为主机的 60%，异常时最多自动恢复 3 次。
 
-## 第一次使用
+简化流程：
 
-要求：
+```text
+实施文档
+   ↓
+Planner ──→ 带依赖的任务计划
+              ↓
+Worker 修改代码 → Controller 运行固定门禁 → Git 提交
+              ↑                ↓
+              └── 失败重试 ────┘
+                               ↓
+                   阶段检查 → 最终门禁 → 独立审查
+```
 
-- 已安装并登录 Codex CLI：`codex --version`、`codex login status`。
-- Node.js 24、tmux、systemd user service、项目依赖和测试环境已经就绪。
-- 产品仓库和本 workflow 仓库都必须处于干净、已提交状态。
-- 电脑整夜保持通电，并关闭自动睡眠。锁屏没有问题，系统挂起会停止进程。
+## 适用范围
 
-在产品仓库根目录安装。workflow 作为被父仓库忽略的独立 Git checkout 维护：
+推荐使用：
+
+- Linux 开发机或可信的 Linux VM；
+- 已有 Git 仓库、自动化测试和明确验收标准的项目；
+- 可以拆成多个小任务、允许在独立分支上持续提交的开发工作；
+- 数小时到一晚的无人值守执行。
+
+暂不适合：
+
+- 模糊的产品想法或需要频繁人工决策的工作；
+- 直接操作生产环境、生产凭据或生产数据；
+- 没有测试门禁、无法判断“完成”的项目；
+- macOS、Windows，或没有 systemd user service 的 Linux 环境；
+- 不准备修改当前 Node.js 前后端适配器的其他项目结构。
+
+## 5 分钟上手
+
+### 1. 准备环境
+
+当前版本需要：
+
+- Linux 与可用的 systemd user service；
+- Node.js 24；
+- tmux；
+- 已安装并登录的 Codex CLI；
+- 一个干净、已提交的产品 Git 仓库；
+- 产品仓库中已经安装好的 `backend/node_modules` 和 `frontend/node_modules`。
+
+先检查：
+
+```bash
+node --version
+codex --version
+codex login
+codex login status
+tmux -V
+systemctl --user status
+```
+
+Codex CLI 的安装、认证和沙箱选项请以官方文档为准：[CLI](https://learn.chatgpt.com/docs/codex/cli)、[认证](https://learn.chatgpt.com/docs/auth)、[配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。
+
+### 2. 作为独立仓库安装
+
+在产品仓库根目录执行：
 
 ```bash
 printf '\nauto-workflow/\n' >> .gitignore
 git add .gitignore
 git commit -m "chore: ignore standalone auto-workflow"
 git clone git@github.com:singledog957/codex_auto_workflow.git auto-workflow
-```
-
-更新 workflow 时运行 `git -C auto-workflow pull --ff-only`。`start.sh` 会把当前 workflow commit 克隆到每个
-隔离的产品 worktree；因此运行期间的代码和 `.runs/` 状态不会依赖主工作区中的嵌套 checkout。
-
-先验证脚本本身：
-
-```bash
 npm --prefix auto-workflow test
-node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 ```
 
-`--dry-run` 不调用 Codex，也不修改源码，只在 `auto-workflow/.runs/` 生成配置和任务预览。
+`auto-workflow/` 是被产品仓库忽略的独立 Git checkout，不是产品仓库的一部分。这样 workflow 可以独立升级，也不会把运行状态混入产品提交。
 
-## 一条命令开始夜间任务
+### 3. 配置产品的验证命令
+
+先编辑 `auto-workflow/config.json`。仓库自带的命令假定项目具有 `backend/`、`frontend/` 和根目录 npm scripts；如果你的项目不同，必须把验证命令改成该项目真实可用的命令。
+
+四个 profile 名称目前是固定接口：
+
+| Profile | 用途 | 默认命令示例 |
+| --- | --- | --- |
+| `backend` | 后端任务 | typecheck、后端测试 |
+| `frontend` | 前端任务 | 前端测试、构建 |
+| `full` | 跨前后端任务 | 后端检查与前端测试 |
+| `docs` | 纯文档任务 | `git diff --check` |
+
+修改后要提交到 workflow 自己的仓库，因为启动器拒绝从脏的 workflow checkout 开始：
 
 ```bash
+git -C auto-workflow add config.json
+git -C auto-workflow commit -m "chore: configure project verification"
+```
+
+### 4. 写实施文档
+
+文档必须位于产品仓库内，并使用相对路径传给启动命令。建议至少写清：
+
+```markdown
+# 目标
+用户最终能获得什么。
+
+## 当前状态
+相关模块、已有行为和已知问题。
+
+## 范围
+这次要改什么；明确不改什么。
+
+## 约束
+兼容性、安全、数据迁移和接口限制。
+
+## 验收标准
+- 可观察、可验证的完成条件。
+- 必须通过的测试和构建命令。
+```
+
+例如保存为 `doc/implementation.md`，并先提交它和所有预期的起始改动。产品仓库与 workflow 仓库都必须干净。
+
+### 5. 预演并启动
+
+```bash
+node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 ./auto-workflow/start.sh doc/implementation.md
 ```
 
-默认行为：
+`--dry-run` 不调用 Codex，也不修改产品源码，只在 `auto-workflow/.runs/` 中生成配置和任务预览。
 
-- 从当前 `HEAD` 创建 `auto/overnight-<时间>` 分支；
-- 在仓库同级目录创建独立 worktree；
-- 把当前 auto-workflow commit 克隆到新 worktree，保持执行器与该次运行的状态自包含；
-- 复用主工作区已经安装的前后端 `node_modules`（只创建被 Git 忽略的符号链接）；
-- 在命名的 tmux session 中后台启动 supervisor，然后立即返回；SSH 断开不会终止任务；
-- 打印 worktree、tmux session、日志和状态命令。
+`start.sh` 会立即打印：
 
-希望在终端前台观察时：
+- 新分支：`auto/overnight-<UTC 时间>`；
+- 产品仓库同级目录中的隔离 worktree；
+- 固定到当前 workflow commit 的独立 workflow clone；
+- tmux session、运行目录、日志和状态查询命令。
 
-```bash
-./auto-workflow/start.sh doc/implementation.md --foreground
-```
+电脑必须保持通电且不能休眠。锁屏和 SSH 断开不会终止后台任务。
 
-## 早上查看
+## 日常命令
 
-`start.sh` 会打印准确路径。进入那个 worktree 后运行：
+以下命令中的 `<run-id>` 和 worktree 路径以 `start.sh` 实际输出为准。
 
-```bash
-tmux has-session -t "=$(cat auto-workflow/.runs/<run-id>/tmux-session)"
-node auto-workflow/runner.mjs status auto-workflow/.runs/<run-id>
-```
+| 操作 | 命令 |
+| --- | --- |
+| 测试 workflow | `npm --prefix auto-workflow test` |
+| 仅生成预览 | `node auto-workflow/runner.mjs run doc/implementation.md --dry-run` |
+| 后台启动 | `./auto-workflow/start.sh doc/implementation.md` |
+| 前台启动 | `./auto-workflow/start.sh doc/implementation.md --foreground` |
+| 查看状态 | `node auto-workflow/runner.mjs status auto-workflow/.runs/<run-id>` |
+| 查看实时终端 | `tmux attach-session -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)"` |
+| 退出实时观察 | 在 tmux 中按 `Ctrl-b d` |
+| 停止本次运行 | `tmux send-keys -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)" C-c` |
+| 继续原运行 | `./auto-workflow/resume.sh auto-workflow/.runs/<run-id>` |
+| 追加继续预算 | `./auto-workflow/resume.sh auto-workflow/.runs/<run-id> --max-hours 12 --max-codex-calls 100` |
+| 更新 workflow | `git -C auto-workflow pull --ff-only` |
 
-`status` 除持久任务状态外还显示 `Controller: ONLINE/OFFLINE`。如果任务状态仍是 `RUNNING`、但 controller
-为 `OFFLINE`，说明监督进程已经停止，应先读 `operator.log` 和 `supervisor.json`，再运行 `resume.sh`；不要把
-这种状态当作仍在执行。
+`resume` 必须在原来的隔离 worktree 和原分支中执行。不要删除 run 目录，也不要在该 worktree 中混入手工修改；失败尝试留下的未提交内容会作为下一次修复的上下文。
 
-需要查看实时终端时运行 `tmux attach-session -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)"`；按
-`Ctrl-b d` 只会退出观察，不会停止任务。
+## 怎么看结果
 
-也可以直接阅读：
+每次运行的资料位于隔离 worktree 的 `auto-workflow/.runs/<run-id>/`：
 
-- `REPORT.md`：给人看的完成/阻塞/剩余摘要；
-- `state.json`：可恢复状态、每项尝试、模型和验证证据；
-- `plan.json`：Sol 生成的任务分解；
-- `logs/`：Codex JSONL 和 controller 真实测试输出；
-- `operator.log`：后台 supervisor、controller 和 Codex 的控制台输出；
-- `tmux-session`：承载当前任务的 tmux session 名称。
-- `supervisor.json`：当前 systemd service、自动恢复次数和最后一次退出原因。
+| 文件 | 内容 |
+| --- | --- |
+| `REPORT.md` | 给人阅读的完成、阻塞和剩余工作摘要 |
+| `state.json` | 可恢复状态、任务尝试、模型、预算和验证证据 |
+| `plan.json` | Planner 生成并经 Controller 校验的任务计划 |
+| `logs/` | Codex JSONL 输出与真实测试日志 |
+| `operator.log` | supervisor、Controller 和 Codex 的后台控制台输出 |
+| `tmux-session` | 承载当前运行的 tmux session 名称 |
+| `supervisor.json` | systemd service、自动恢复次数和最后退出原因 |
 
-终态只有：
+终态含义：
 
-- `COMPLETE`：任务、完整门禁和独立审查全部通过；
-- `BLOCKED`：重试耗尽、依赖死锁、最终门禁或审查不通过；
-- `BUDGET_EXHAUSTED`：本晚 8 小时或 30 次 Codex 调用用完，进度已保存。
+- `COMPLETE`：所有任务、最终门禁和独立审查都通过；
+- `BLOCKED`：重试耗尽、依赖死锁、最终门禁或审查未通过；
+- `BUDGET_EXHAUSTED`：时间或 Codex 调用预算用完，进度已保存，可以 resume。
 
-## 第二天继续
+`status` 还会显示 Controller 是否 `ONLINE`。若任务仍显示 `RUNNING`，但 Controller 为 `OFFLINE`，应先查看 `operator.log` 和 `supervisor.json`，再决定是否 resume。
 
-在原 worktree 和原分支中运行：
+## 把结果接回主分支
 
-```bash
-./auto-workflow/resume.sh auto-workflow/.runs/<run-id> \
-  --max-hours 12 \
-  --max-codex-calls 100
-```
-
-`resume.sh` 默认在原 worktree 中创建同名 tmux session；如果该 session 仍存活，它只报告当前 session，不会重复启动 runner。
-每次 resume 都获得一个新预算窗口。省略预算参数时继续使用该 run 的 `config.snapshot.json`；`--max-hours` 接受正数，
-`--max-codex-calls` 接受正整数。覆盖只影响这次 resume session，并记录到 `state.json` 的 session 历史，不会改写原始配置快照。
-不要在这个 worktree 中混入手工修改；失败尝试留下的未提交代码会作为下一次修复的上下文继续使用。
-
-如果最初的 Planner 在生成任务队列前失败，报告会显示 `T000 Planning bootstrap`。`resume` 会识别这个合成任务并重新运行 Planner，不需要删除 run 目录或重新创建 worktree。
-
-## 停止
-
-向 tmux pane 发送 `Ctrl-C`，让 supervisor 停止当前 service cgroup（包括 runner、Codex 及测试子进程）：
+workflow 只在 `auto/overnight-...` 分支提交，不会替你合并。先在产品仓库检查运行结果：
 
 ```bash
-tmux send-keys -t "$(cat auto-workflow/.runs/<run-id>/tmux-session)" C-c
+git log --oneline main..auto/overnight-<run-id>
+git diff --stat main...auto/overnight-<run-id>
+git diff main...auto/overnight-<run-id>
 ```
 
-不要删除 state 或 worktree。下次 `resume` 会把中断的 `running` attempt 还原为 `pending`，并保留日志证据。
+确认后可按团队正常流程创建集成分支并合并：
 
-## 费用和速度
+```bash
+git switch main
+git switch -c integrate/auto-<run-id>
+git merge --no-ff auto/overnight-<run-id>
+# 再运行产品仓库自己的完整门禁，然后 review / push / PR
+```
 
-默认普通任务最多四次：Luna 两次、Terra 一次、Sol 一次。清楚、重复的工作优先交给 Luna；Sol 只负责规划、高风险任务、最终兜底和独立审查。没有启用 Fast mode，因为目标是节约额度，而不是提高瞬时速度。
+如果主分支在自动运行期间已经前进，应先按团队规则处理冲突，不要把 `COMPLETE` 当作免审查或可直接发布的证明。
 
-可在 `config.json` 修改：
+## 配置参考
 
-- `maxHours`：单晚时间预算；
-- `maxCodexCalls`：单晚模型调用预算；
-- `checkpointEvery`：完整 checkpoint 的频率；
-- `maxCheckpointReplans`：显式 Phase checkpoint 最多允许的缺口拆单轮数，默认 2；
-- 模型和 reasoning effort；
-- 仓库固定的验证命令。
+主要设置都在 `config.json`：
 
-资源隔离默认值可用环境变量临时覆盖：`AUTO_WORKFLOW_MEMORY_MAX`（systemd 内存值，默认 `60%`）、
-`AUTO_WORKFLOW_MAX_RESTARTS`（默认 3）和 `AUTO_WORKFLOW_RESTART_DELAY_MS`（默认 5000）。内存上限同时应用于
-`MemoryMax` 和 `MemorySwapMax`。选择 systemd service 而不是只杀 Codex PID，是因为模型执行的测试会再启动
-Node、PostgreSQL 等孙进程；service 的 `KillMode=control-group` 能在正常退出、超时和 OOM 后统一回收整个进程树。
-调用环境通过 service stdin 传入，不会作为 systemd 命令参数或持久文件暴露；因此 PATH、代理和临时测试变量与启动
-`start.sh`/`resume.sh` 时保持一致。
+| 配置 | 作用 |
+| --- | --- |
+| `models.planner` | 规划任务的模型与 reasoning effort |
+| `models.attempts` | 普通任务的有界重试顺序 |
+| `models.highRiskAttempts` | 高风险任务的重试顺序 |
+| `models.reviewer` | 最终独立审查模型 |
+| `execution.maxHours` | 单次运行的时间预算 |
+| `execution.maxCodexCalls` | 单次运行的 Codex 调用预算 |
+| `execution.codexTimeoutMinutes` | 单次模型调用超时 |
+| `execution.verificationTimeoutMinutes` | 单次验证门禁超时 |
+| `execution.checkpointEvery` | 每完成多少项运行阶段门禁 |
+| `execution.maxCheckpointReplans` | 阶段检查发现缺口后最多追加几轮修复任务 |
+| `verification.profiles` | 单项任务可选的固定验证命令 |
+| `verification.checkpoint` | 阶段门禁命令 |
+| `verification.final` | 最终完整门禁命令 |
 
-公开配置默认使用 `workspace-write`。如果某台一次性或可信开发机确实无法运行 Codex 沙箱，可把
-`execution.sandbox` 改为 `danger-full-access`，并同时显式设置 `allowDangerFullAccess: true`。runner 仍会使用
-隔离 worktree、固定验证命令、禁止审批和 Git 不变量检查，但这种模式下模型生成的命令不再受 OS 沙箱限制。
-不要在包含生产凭据、生产数据或其他高价值资产的机器上启用该逃生开关。
+资源隔离可用环境变量临时覆盖：
 
-默认聚合门禁使用 `npm run lint`/`npm run build`，避免后台非登录 shell 找不到由 Corepack 提供的 `pnpm`；它们仍然调用仓库根 `package.json` 中相同的前后端脚本。
+- `AUTO_WORKFLOW_MEMORY_MAX`：systemd 的 `MemoryMax` 和 `MemorySwapMax`，默认 `60%`；
+- `AUTO_WORKFLOW_MAX_RESTARTS`：Controller 异常后的最大自动恢复次数，默认 `3`；
+- `AUTO_WORKFLOW_RESTART_DELAY_MS`：恢复前等待时间，默认 `5000` 毫秒。
 
-## 当前边界
+## 安全边界
 
-- `COMPLETE` 代表自动化证据全部通过，不等同于生产发布；此工作流永远不会部署。
-- 一个大型实施文档不保证一夜完成；预算耗尽后按原状态继续。
-- 最终审查拒绝时，第一版会报告 blockers，不会擅自修改验收标准或无限循环。
-- PostgreSQL 专项测试需要你预先提供隔离的测试数据库配置；默认门禁使用仓库的 SQLite 测试入口。
-- `config.json` 中的前后端验证命令是示例项目配置；在其他仓库使用前必须改成该仓库真实且固定的门禁。
-- 自动恢复只处理 controller 异常退出；连续三次恢复后仍是 `RUNNING` 会停止并在 `supervisor.json` 中要求人工诊断，
-  以避免永久重启循环。
+公开配置默认使用 `workspace-write`。Planner、阶段检查和最终审查在可行时使用只读检查；每次任务还受独立 worktree、文件数量预算、结构化输出 schema、固定验证命令和 Git 状态检查约束。
+
+只有在可信的一次性环境确实无法使用沙箱时，才同时设置：
+
+```json
+{
+  "execution": {
+    "sandbox": "danger-full-access",
+    "allowDangerFullAccess": true
+  }
+}
+```
+
+该模式允许模型生成的命令越过 OS 沙箱。不要在包含生产凭据、生产数据或其他高价值资产的机器上启用。
+
+## 当前限制
+
+- `start.sh` 当前固定检查并复用 `backend/node_modules` 与 `frontend/node_modules`；其他目录结构需要修改启动适配器。
+- 四个验证 profile 名称由计划 schema 固定为 `backend`、`frontend`、`full`、`docs`；可以改各自命令，但不能只在 `config.json` 中另起名称。
+- PostgreSQL 等外部服务需要提前提供隔离的测试环境；workflow 不会连接或准备生产资源。
+- 阶段检查发现缺口时，每轮最多生成 5 个有文件预算的修复任务；超过配置轮数后进入 `BLOCKED`，不会无限扩张任务。
+- 自动恢复只处理 Controller 异常退出；连续失败达到上限后需要人工查看日志。
+- `COMPLETE` 只表示自动化证据通过，不代表已完成安全审计、人工验收或生产发布。
