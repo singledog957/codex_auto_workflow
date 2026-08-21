@@ -200,7 +200,19 @@ node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 
 ## 日常命令
 
-以下命令中的 `<run-id>` 和 worktree 路径以 `start.sh` 实际输出为准。
+以下命令中的 `<run-id>` 和 `<worktree>` 以 `start.sh` 实际打印的 `Run data` 与 `Worktree` 为准。
+
+查看、停止或恢复已经启动的 run 前，必须先进入该 run 的隔离 worktree；不要在产品主仓库根目录直接执行这些相对路径命令：
+
+```bash
+cd '<worktree>'
+```
+
+也可以直接复制 `start.sh` 在 `Check status later with:` 后打印的完整单行命令，例如：
+
+```bash
+cd '<worktree>' && node auto-workflow/runner.mjs status 'auto-workflow/.runs/<run-id>'
+```
 
 | 操作 | 命令 |
 | --- | --- |
@@ -215,6 +227,8 @@ node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 | 继续原运行 | `./auto-workflow/resume.sh auto-workflow/.runs/<run-id>` |
 | 追加继续预算 | `./auto-workflow/resume.sh auto-workflow/.runs/<run-id> --max-hours 12 --max-codex-calls 100` |
 | 更新 workflow | 运行“更新已安装的 workflow”中的三条命令 |
+
+表格中的“查看状态”“查看实时终端”“停止”“继续”命令都假定当前目录已经是 `<worktree>`。如果 Bash 显示 `>` 而不是执行命令，表示引号尚未闭合；按 `Ctrl-C` 取消，然后重新复制完整一行，不要在下一行补引号，否则换行会成为路径的一部分。
 
 `resume` 必须在原来的隔离 worktree 和原分支中执行。不要删除 run 目录，也不要在该 worktree 中混入手工修改；失败尝试留下的未提交内容会作为下一次修复的上下文。
 
