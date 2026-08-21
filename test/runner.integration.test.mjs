@@ -53,7 +53,7 @@ const output = valueAfter('--output-last-message')
 if (schema && basename(schema) === 'plan.schema.json') {
   await writeFile(output, JSON.stringify({outcome:'work_remaining',summary:'tiny',tasks:[{id:'T001',title:'create marker',objective:'Create done.txt.',acceptanceCriteria:['done.txt exists'],dependencies:[],verificationProfile:'project',risk:'normal'}]}))
 } else if (schema && basename(schema) === 'review.schema.json') {
-  await writeFile(output, JSON.stringify({status:'approved',summary:'complete',blockers:[]}))
+  await writeFile(output, JSON.stringify({status:'approved',summary:'complete',resolvedFindingIds:[],unresolvedFindingIds:[],newFindings:[],advisories:[]}))
 } else {
   await writeFile('done.txt', 'done\\n')
   await writeFile(output, 'implemented')
@@ -90,6 +90,100 @@ console.log(JSON.stringify({type:'turn.completed'}))
   assert.equal(await readFile(join(repo, 'done.txt'), 'utf8'), 'done\n')
   const log = await run('git', ['log', '--oneline', '-2'], { cwd: repo })
   assert.match(log.stdout, /auto: complete T001/)
+})
+
+test('resume performs a bounded closure review against the registered baseline findings', async (t) => {
+  const repo = await mkdtemp(join(tmpdir(), 'auto-workflow-review-closure-'))
+  const bin = join(repo, 'fake-bin')
+  const runDirectory = 'auto-workflow/.runs/review-closure'
+  const runPath = join(repo, runDirectory)
+  t.after(() => rm(repo, { recursive: true, force: true }))
+
+  await mkdir(bin)
+  await mkdir(join(repo, 'auto-workflow'))
+  await writeFile(join(repo, '.gitignore'), 'auto-workflow/.runs/\nfake-bin/\n')
+  await writeFile(join(repo, 'doc.md'), '# Review closure\n\nCreate done.txt safely.\n')
+  await writeFile(join(repo, 'config.json'), JSON.stringify({
+    execution: {
+      maxHours: 1,
+      maxCodexCalls: 5,
+      codexTimeoutMinutes: 1,
+      verificationTimeoutMinutes: 1,
+    },
+    verification: {
+      profiles: { project: ["node -e \"process.exit(0)\""] },
+    },
+  }))
+
+  const fakeCodex = join(bin, 'codex')
+  await writeFile(fakeCodex, `#!/usr/bin/env node
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+const args = process.argv.slice(2)
+const valueAfter = (flag) => args[args.indexOf(flag) + 1]
+const schema = args.includes('--output-schema') ? valueAfter('--output-schema') : null
+const output = valueAfter('--output-last-message')
+let prompt = ''
+for await (const chunk of process.stdin) prompt += chunk
+if (schema && basename(schema) === 'plan.schema.json') {
+  await writeFile(output, JSON.stringify({outcome:'work_remaining',summary:'tiny',tasks:[{id:'T001',title:'create marker',objective:'Create done.txt.',acceptanceCriteria:['done.txt exists'],dependencies:[],verificationProfile:'project',risk:'normal'}]}))
+} else if (schema && basename(schema) === 'review.schema.json') {
+  await appendFile('fake-bin/review-prompts.log', prompt.replaceAll('\\n', ' ') + '\\n')
+  let count = 0
+  try { count = Number(await readFile('fake-bin/review-count', 'utf8')) } catch {}
+  await writeFile('fake-bin/review-count', String(count + 1))
+  const review = count === 0
+    ? {status:'rejected',summary:'recovery proof missing',resolvedFindingIds:[],unresolvedFindingIds:[],newFindings:[{severity:'required',origin:'baseline',title:'Missing recovery proof',evidence:'done.txt lacks repair evidence.',files:['done.txt'],requiredOutcome:'Add repair evidence.'}],advisories:[]}
+    : {status:'approved',summary:'registered finding resolved',resolvedFindingIds:['FR-001'],unresolvedFindingIds:[],newFindings:[],advisories:['Unrelated cleanup is non-blocking.']}
+  await writeFile(output, JSON.stringify(review))
+} else {
+  await writeFile('done.txt', 'done\\n')
+  await writeFile(output, 'implemented')
+}
+console.log(JSON.stringify({type:'turn.completed'}))
+`)
+  await chmod(fakeCodex, 0o755)
+
+  await run('git', ['init', '-q'], { cwd: repo })
+  await run('git', ['config', 'user.name', 'Workflow Test'], { cwd: repo })
+  await run('git', ['config', 'user.email', 'workflow@example.test'], { cwd: repo })
+  await run('git', ['add', '.'], { cwd: repo })
+  await run('git', ['commit', '-qm', 'initial'], { cwd: repo })
+
+  const first = await run(process.execPath, [
+    runnerPath,
+    'run',
+    'doc.md',
+    '--config',
+    'config.json',
+    '--run-dir',
+    runDirectory,
+  ], { cwd: repo, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } })
+
+  assert.equal(first.code, 2, first.stderr || first.stdout)
+  let state = JSON.parse(await readFile(join(runPath, 'state.json'), 'utf8'))
+  assert.equal(state.finalReview.mode, 'baseline')
+  assert.equal(state.finalReviewLedger.findings[0].id, 'FR-001')
+
+  await writeFile(join(repo, 'repair.txt'), 'repair evidence\n')
+  await run('git', ['add', 'repair.txt'], { cwd: repo })
+  await run('git', ['commit', '-qm', 'fix: add recovery proof'], { cwd: repo })
+
+  const second = await run(process.execPath, [
+    runnerPath,
+    'resume',
+    runDirectory,
+  ], { cwd: repo, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } })
+
+  assert.equal(second.code, 0, second.stderr || second.stdout)
+  state = JSON.parse(await readFile(join(runPath, 'state.json'), 'utf8'))
+  assert.equal(state.status, 'COMPLETE')
+  assert.equal(state.finalReview.mode, 'closure')
+  assert.equal(state.finalReviewLedger.findings[0].status, 'resolved')
+  assert.equal(state.finalReviewLedger.rounds.length, 2)
+  assert.match(await readFile(join(bin, 'review-prompts.log'), 'utf8'), /closure review round 2/i)
+  assert.equal(await readFile(join(runPath, 'review-output-round-1.json'), 'utf8').then(Boolean), true)
+  assert.equal(await readFile(join(runPath, 'review-output-round-2.json'), 'utf8').then(Boolean), true)
 })
 
 test('resume can override the snapshot budget for one new session', async (t) => {
@@ -257,7 +351,7 @@ if (schema && basename(schema) === 'plan.schema.json') {
     : {status:'approved',summary:'phase accepted',findings:[]}
   await writeFile(output, JSON.stringify(review))
 } else if (schema && basename(schema) === 'review.schema.json') {
-  await writeFile(output, JSON.stringify({status:'approved',summary:'complete',blockers:[]}))
+  await writeFile(output, JSON.stringify({status:'approved',summary:'complete',resolvedFindingIds:[],unresolvedFindingIds:[],newFindings:[],advisories:[]}))
 } else {
   await writeFile('repair.txt', 'repaired\\n')
   await writeFile(output, 'implemented')

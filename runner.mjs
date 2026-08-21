@@ -17,6 +17,7 @@ import {
   commitCheckpoint,
   gitBranch,
   gitChangedFiles,
+  gitFilesBetween,
   gitHead,
   gitInvariantViolation,
   gitStatus,
@@ -30,11 +31,13 @@ import {
   addCheckpointFindings,
   createRunState,
   effectiveTaskType,
+  finalReviewContext,
   isPlanningBootstrapState,
   markAttemptFailed,
   markTaskCompleted,
   nextRunnableTask,
   recoverInterruptedState,
+  recordFinalReview,
   startAttempt,
   terminalStatus,
   validateCheckpointReview,
@@ -511,8 +514,17 @@ async function finalize({ state, repoRoot, runDir, config, deadline, session }) 
     return
   }
 
-  const outputPath = join(runDir, 'review-output.json')
-  const logPath = join(runDir, 'logs', 'final-review.jsonl')
+  const baseReviewContext = finalReviewContext(state)
+  const reviewedCommit = await gitHead(repoRoot)
+  const reviewContext = {
+    ...baseReviewContext,
+    repairFiles: baseReviewContext.mode === 'closure'
+      ? await gitFilesBetween(repoRoot, baseReviewContext.previousReviewedCommit, reviewedCommit)
+      : [],
+  }
+  const outputPath = join(runDir, `review-output-round-${reviewContext.round}.json`)
+  const latestOutputPath = join(runDir, 'review-output.json')
+  const logPath = join(runDir, 'logs', `final-review-round-${reviewContext.round}.jsonl`)
   session.calls += 1
   state.codexCalls += 1
   await saveState(runDir, state)
@@ -521,6 +533,7 @@ async function finalize({ state, repoRoot, runDir, config, deadline, session }) 
       sourceDocument: state.sourceDocument,
       statePath: relative(repoRoot, join(runDir, 'state.json')),
       baseCommit: state.baseCommit,
+      reviewContext,
     }),
     cwd: repoRoot,
     model: config.models.reviewer.model,
@@ -536,14 +549,13 @@ async function finalize({ state, repoRoot, runDir, config, deadline, session }) 
     state.status = 'BLOCKED'
   } else {
     const review = await readJson(outputPath)
-    if (!['approved', 'rejected'].includes(review.status)
-      || typeof review.summary !== 'string'
-      || review.summary.length === 0
-      || !Array.isArray(review.blockers)
-      || review.blockers.some((blocker) => typeof blocker !== 'string' || blocker.length === 0)) {
-      throw new Error('Final reviewer returned invalid structured output')
-    }
-    state.finalReview = review
+    recordFinalReview(state, review, {
+      reviewedCommit,
+      output: relative(repoRoot, outputPath),
+      log: relative(repoRoot, logPath),
+      reviewContext,
+    })
+    await writeJsonAtomic(latestOutputPath, review)
     state.status = review.status === 'approved' ? 'COMPLETE' : 'BLOCKED'
   }
   await saveState(runDir, state)

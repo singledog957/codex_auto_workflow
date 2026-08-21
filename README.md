@@ -227,6 +227,7 @@ node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 | `REPORT.md` | 给人阅读的完成、阻塞和剩余工作摘要 |
 | `state.json` | 可恢复状态、任务尝试、模型、预算和验证证据 |
 | `plan.json` | Planner 生成并经 Controller 校验的任务计划 |
+| `review-output-round-<n>.json` | 第 n 轮最终审查的原始结构化结果；不会被后续轮覆盖 |
 | `logs/` | Codex JSONL 输出与真实测试日志 |
 | `operator.log` | supervisor、Controller 和 Codex 的后台控制台输出 |
 | `tmux-session` | 承载当前运行的 tmux session 名称 |
@@ -239,6 +240,17 @@ node auto-workflow/runner.mjs run doc/implementation.md --dry-run
 - `BUDGET_EXHAUSTED`：时间或 Codex 调用预算用完，进度已保存，可以 resume。
 
 `status` 还会显示 Controller 是否 `ONLINE`。若任务仍显示 `RUNNING`，但 Controller 为 `OFFLINE`，应先查看 `operator.log` 和 `supervisor.json`，再决定是否 resume。
+
+### 最终审查如何收敛
+
+最终审查分成两种模式：
+
+- 第一次是 `baseline`：对完整需求和分支做一次有界审查，把已证实的 Critical/Required blocker 固化为 `FR-001` 这类稳定 finding；同根因问题必须合并，样式、清理、推测性风险和未被本分支恶化的既有债务只记为 advisory。
+- 后续 `resume` 是 `closure`：逐项复核尚未关闭的 finding，并检查上一个受审 commit 到当前 HEAD 的修复 diff。它不会重新审计整个分支。
+
+closure 轮新增 blocker 只有两种合法来源：修复 diff 引入的回归，或者带可复现证据的 Critical 安全/数据完整性例外。与修复无关的新 Required、优化建议和既有问题进入 advisory，不阻止完成。Controller 会校验每个旧 finding 必须明确标成 resolved 或 unresolved，也会校验 repair regression 至少引用一个实际出现在修复 diff 中的文件。
+
+因此终止条件是：固定验证通过、已登记 blocker 全部关闭、修复 diff 没有新增合法 blocker。每轮的受审 commit、finding 状态、advisory、输出和日志路径都会保存在 `state.json.finalReviewLedger` 中。
 
 ## 把结果接回主分支
 
@@ -309,5 +321,6 @@ example 配置使用 `workspace-write`。Planner、阶段检查和最终审查�
 - 隔离 worktree 默认只包含产品仓库已跟踪的文件，不会自动复制 `node_modules`、虚拟环境、构建缓存等被忽略内容；验证命令需要使用可用的全局工具、共享缓存，或自行准备所需环境。
 - PostgreSQL 等外部服务需要提前提供隔离的测试环境；workflow 不会连接或准备生产资源。
 - 阶段检查发现缺口时，每轮最多生成 5 个有文件预算的修复任务；超过配置轮数后进入 `BLOCKED`，不会无限扩张任务。
+- final review 的 closure 模式仍允许新的 Critical finding；它有意不会为了收敛而放过可复现的泄密、越权、数据损坏、不可逆迁移或核心功能故障。
 - 自动恢复只处理 Controller 异常退出；连续失败达到上限后需要人工查看日志。
 - `COMPLETE` 只表示自动化证据通过，不代表已完成安全审计、人工验收或生产发布。

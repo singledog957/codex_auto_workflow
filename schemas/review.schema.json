@@ -1,12 +1,60 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "summary", "blockers"],
+  "required": [
+    "status",
+    "summary",
+    "resolvedFindingIds",
+    "unresolvedFindingIds",
+    "newFindings",
+    "advisories"
+  ],
   "properties": {
     "status": { "type": "string", "enum": ["approved", "rejected"] },
     "summary": { "type": "string" },
-    "blockers": {
+    "resolvedFindingIds": {
       "type": "array",
+      "items": { "type": "string", "pattern": "^FR-[0-9]{3,}$" }
+    },
+    "unresolvedFindingIds": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^FR-[0-9]{3,}$" }
+    },
+    "newFindings": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "severity",
+          "origin",
+          "title",
+          "evidence",
+          "files",
+          "requiredOutcome"
+        ],
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "required"] },
+          "origin": {
+            "type": "string",
+            "enum": ["baseline", "repair_regression", "critical_exception"]
+          },
+          "title": { "type": "string" },
+          "evidence": { "type": "string" },
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": { "type": "string" }
+          },
+          "requiredOutcome": { "type": "string" }
+        }
+      }
+    },
+    "advisories": {
+      "type": "array",
+      "maxItems": 20,
       "items": { "type": "string" }
     }
   }

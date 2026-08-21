@@ -16,5 +16,5 @@ Approve for repository-local use in an isolated worktree. It does not authorize 
 
 - A sleeping or powered-off computer stops local execution.
 - Failed model edits remain uncommitted in the isolated worktree so a later attempt can repair them.
-- A rejected final review reports blockers instead of entering an unbounded repair loop.
+- The first final review freezes material blockers in a stable finding ledger. Later closure reviews verify those findings and the repair diff instead of re-auditing the whole branch; only repair regressions or reproducible new Critical issues may expand the blocking set.
 - The existing frontend build emits third-party `lottie-web` eval and bundle-size warnings; this workflow neither introduces nor suppresses them.

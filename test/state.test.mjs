@@ -5,11 +5,13 @@ import {
   addCheckpointFindings,
   createRunState,
   effectiveTaskType,
+  finalReviewContext,
   isPlanningBootstrapState,
   markAttemptFailed,
   markTaskCompleted,
   nextRunnableTask,
   recoverInterruptedState,
+  recordFinalReview,
   terminalStatus,
   validatePlan,
 } from '../lib/state.mjs'
@@ -165,6 +167,166 @@ test('reports complete only after tasks, final gates, and final review pass', ()
   assert.equal(terminalStatus(state), 'RUNNING')
   state.finalReview = { status: 'approved', blockers: [] }
   assert.equal(terminalStatus(state), 'COMPLETE')
+})
+
+test('records a baseline review as a stable finding ledger', () => {
+  const state = createRunState({ sourceDocument: 'doc/plan.md', plan, now: '2026-08-16T00:00:00.000Z' })
+
+  assert.deepEqual(finalReviewContext(state), {
+    mode: 'baseline',
+    round: 1,
+    previousReviewedCommit: null,
+    openFindings: [],
+  })
+
+  recordFinalReview(state, {
+    status: 'rejected',
+    summary: 'One material blocker remains.',
+    resolvedFindingIds: [],
+    unresolvedFindingIds: [],
+    newFindings: [{
+      severity: 'required',
+      origin: 'baseline',
+      title: 'Missing recovery test',
+      evidence: 'src/recovery.mjs has no interrupted-write coverage.',
+      files: ['src/recovery.mjs'],
+      requiredOutcome: 'Add a regression test and preserve recovery state.',
+    }],
+    advisories: ['Consider simplifying the helper later.'],
+  }, {
+    reviewedCommit: 'abc123',
+    output: 'review-output-round-1.json',
+    log: 'logs/final-review-round-1.jsonl',
+    now: '2026-08-16T01:00:00.000Z',
+  })
+
+  assert.equal(state.finalReview.status, 'rejected')
+  assert.equal(state.finalReview.mode, 'baseline')
+  assert.match(state.finalReview.blockers[0], /FR-001.*Missing recovery test/)
+  assert.equal(state.finalReviewLedger.findings[0].id, 'FR-001')
+  assert.equal(state.finalReviewLedger.findings[0].status, 'open')
+  assert.deepEqual(finalReviewContext(state), {
+    mode: 'closure',
+    round: 2,
+    previousReviewedCommit: 'abc123',
+    openFindings: [state.finalReviewLedger.findings[0]],
+  })
+})
+
+test('closure review resolves known findings and permits only regressions or critical exceptions', () => {
+  const state = createRunState({ sourceDocument: 'doc/plan.md', plan })
+  recordFinalReview(state, {
+    status: 'rejected',
+    summary: 'Baseline blocker.',
+    resolvedFindingIds: [],
+    unresolvedFindingIds: [],
+    newFindings: [{
+      severity: 'required',
+      origin: 'baseline',
+      title: 'Missing recovery test',
+      evidence: 'Recovery is not covered.',
+      files: ['src/recovery.mjs'],
+      requiredOutcome: 'Cover recovery.',
+    }],
+    advisories: [],
+  }, { reviewedCommit: 'abc123' })
+
+  assert.throws(() => recordFinalReview(state, {
+    status: 'rejected',
+    summary: 'Unrelated required issue.',
+    resolvedFindingIds: ['FR-001'],
+    unresolvedFindingIds: [],
+    newFindings: [{
+      severity: 'required',
+      origin: 'critical_exception',
+      title: 'Pre-existing cleanup',
+      evidence: 'This predates the repair.',
+      files: ['src/old.mjs'],
+      requiredOutcome: 'Refactor it.',
+    }],
+    advisories: [],
+  }, { reviewedCommit: 'def456' }), /critical exception.*critical severity/i)
+
+  recordFinalReview(state, {
+    status: 'approved',
+    summary: 'The registered blocker is closed with no repair regression.',
+    resolvedFindingIds: ['FR-001'],
+    unresolvedFindingIds: [],
+    newFindings: [],
+    advisories: ['A pre-existing cleanup can be tracked separately.'],
+  }, { reviewedCommit: 'def456' })
+
+  assert.equal(state.finalReview.status, 'approved')
+  assert.deepEqual(state.finalReview.blockers, [])
+  assert.equal(state.finalReviewLedger.findings[0].status, 'resolved')
+  assert.equal(state.finalReviewLedger.rounds.length, 2)
+})
+
+test('closure review must account for every open finding exactly once', () => {
+  const state = createRunState({ sourceDocument: 'doc/plan.md', plan })
+  recordFinalReview(state, {
+    status: 'rejected',
+    summary: 'Baseline blocker.',
+    resolvedFindingIds: [],
+    unresolvedFindingIds: [],
+    newFindings: [{
+      severity: 'critical',
+      origin: 'baseline',
+      title: 'Secret disclosure',
+      evidence: 'A credential reaches the log.',
+      files: ['src/log.mjs'],
+      requiredOutcome: 'Redact the credential.',
+    }],
+    advisories: [],
+  }, { reviewedCommit: 'abc123' })
+
+  assert.throws(() => recordFinalReview(state, {
+    status: 'approved',
+    summary: 'Approved without reconciling the finding.',
+    resolvedFindingIds: [],
+    unresolvedFindingIds: [],
+    newFindings: [],
+    advisories: [],
+  }, { reviewedCommit: 'def456' }), /account for every open finding/i)
+})
+
+test('closure review cannot label an unrelated required finding as a repair regression', () => {
+  const state = createRunState({ sourceDocument: 'doc/plan.md', plan })
+  recordFinalReview(state, {
+    status: 'rejected',
+    summary: 'Baseline blocker.',
+    resolvedFindingIds: [],
+    unresolvedFindingIds: [],
+    newFindings: [{
+      severity: 'required',
+      origin: 'baseline',
+      title: 'Missing recovery test',
+      evidence: 'Recovery is not covered.',
+      files: ['src/recovery.mjs'],
+      requiredOutcome: 'Cover recovery.',
+    }],
+    advisories: [],
+  }, { reviewedCommit: 'abc123' })
+  const reviewContext = {
+    ...finalReviewContext(state),
+    repairFiles: ['src/recovery.mjs', 'test/recovery.test.mjs'],
+  }
+
+  assert.throws(() => recordFinalReview(state, {
+    status: 'rejected',
+    summary: 'An unrelated issue was presented as a regression.',
+    resolvedFindingIds: ['FR-001'],
+    unresolvedFindingIds: [],
+    newFindings: [{
+      severity: 'required',
+      origin: 'repair_regression',
+      title: 'Unrelated cleanup',
+      evidence: 'This file was not changed by the repair.',
+      files: ['src/old.mjs'],
+      requiredOutcome: 'Refactor it.',
+    }],
+    advisories: [],
+  }, { reviewedCommit: 'def456', reviewContext }), /repair diff/i)
 })
 
 test('recognizes explicit and legacy checkpoint tasks without changing legacy implementation tasks', () => {
